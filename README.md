@@ -1,67 +1,74 @@
-# TABLA
+<p align="center"><img src="docs/screenshots/logo.png" width="80" alt="TABLA logo"></p>
+<h1 align="center">TABLA</h1>
+<p align="center">A little order. A lot more room.</p>
+<p align="center">A local personal workspace for Windows Â· Version 0.9.0</p>
 
-**A little order. A lot more room.**
+![TABLA Home with sample tasks, calendar and notes](docs/screenshots/home.png)
 
-A local-first Windows workspace for tasks, calendars, notes, and focus sessions. Built with Python and Qt.
+TABLA brings your tasks, calendar, notes and focus sessions into one native Windows app. Your workspace stays on your computer. No account or internet connection is required.
 
-## Download and run
+[Download for Windows](https://github.com/Changelo06/Tabla/releases/latest) · [Quick guide](docs/USER_GUIDE.md) · [MIT license](LICENSE)
 
-Requires Windows x64. Python is not required for the packaged application.
+## What you can do
 
-**Download status:** the Windows package has not yet been published to this repository. These instructions apply once it is available in [Releases](https://github.com/Changelo06/Tabla/releases).
+- **Start at Home:** see upcoming tasks, your calendar, board shortcuts and recent notes.
+- **Move work forward:** organize projects into independent boards with lists, cards, checklists, labels and attachments.
+- **Plan your time:** use month, week and day calendars for events, deadlines and work blocks.
+- **Keep your ideas:** capture formatted notes with colors, pins, checklists, images, tables and links.
+- **Make space to focus:** choose a task or note and use a configurable Pomodoro timer with breaks and local session history.
+- **Find and protect your work:** search locally, restore deleted items and export portable JSON backups.
 
-1. Download `Tabla-Windows-0.9.0.zip` from Releases. Choose the Windows package rather than GitHub's automatic source-code archive.
+<table><tr><td><img src="docs/screenshots/boards.png" alt="Project boards with sample cards"></td><td><img src="docs/screenshots/calendar.png" alt="Weekly calendar with sample events"></td></tr><tr><td><img src="docs/screenshots/notes.png" alt="Colored sample notes and checklists"></td><td><img src="docs/screenshots/focus.png" alt="Focus timer"></td></tr></table>
+
+All screenshots use a separate sample workspace.
+
+## Run the Windows app
+
+1. Download `Tabla-Windows-0.9.0.zip` from [Releases](https://github.com/Changelo06/Tabla/releases) when available. Choose the Windows package, rather than the automatic source-code archive.
 2. Right-click the ZIP and choose **Extract All**.
-3. Move the extracted `Tabla` folder somewhere convenient, such as `C:\Users\YourName\Apps\Tabla`. Replace `YourName` with your Windows account name.
-4. Open the folder and double-click **Tabla.exe**.
+3. Move the complete `Tabla` folder to a convenient location, such as `C:\Users\YourName\Apps\Tabla`.
+4. Open **Tabla.exe**. Python is not required.
 
-TABLA is portable, so there is no installation wizard. Keep the entire extracted folder together, including `_internal`, licenses and notices. Do not run the app from inside the ZIP or copy only `Tabla.exe`.
+Keep `_internal`, licenses and notices beside the executable. TABLA is portable; there is no installation wizard. You can create a desktop shortcut to `Tabla.exe`. Moving this app folder does not move your saved workspace.
 
-You can also keep the complete app folder on another writable drive. Moving the app does not move your saved workspace onto that drive.
+The current package targets Windows x64 and is unsigned. It has no automatic updater. To update, extract the new app into a separate folder and launch it; your workspace is stored separately from the app.
 
-### Optional desktop shortcut
+## Run from source
 
-Right-click `Tabla.exe` and choose **Show more options → Send to → Desktop (create shortcut)** where available. If you move the app folder later, recreate or update the shortcut.
+Use Windows x64 and Python 3.11. In PowerShell, from the repository folder:
 
-## Getting started
-
-- **Home:** see your calendar, tasks, board shortcuts and recent notes.
-- **Board:** organize projects with lists and task cards.
-- **Calendar:** plan events using month, week or day views.
-- **Notes:** capture ideas, create checklists and pin favorites.
-- **Focus:** choose a task or note and explicitly start a focus session.
-
-A new workspace starts empty. Settings includes an **Add sample workspace** option for exploring examples.
-
-## Where your data lives
-
-Your default workspace is stored separately from the app:
-
-```text
-%LOCALAPPDATA%\Tabla
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe run_tabla.py
 ```
 
-Paste this into File Explorer's address bar to open it. It normally resolves to `C:\Users\YourName\AppData\Local\Tabla`. Settings shows the exact folder and lets you export JSON backups containing referenced attachments.
+The first workspace starts empty. To explore sample content in a separate local workspace:
 
-Daily database snapshots alone do not include attachment files. This version does not encrypt your database.
+```powershell
+.\.venv\Scripts\python.exe run_tabla.py --data-dir build/demo --demo
+```
 
-## Updating
+## Your data
 
-1. Export a JSON backup from Settings.
-2. Close TABLA, including any running tray instance.
-3. Extract the new Windows release into a separate folder.
-4. Run its `Tabla.exe` and check your workspace.
-5. Update your desktop shortcut to point to the new executable.
+The default workspace lives under `%LOCALAPPDATA%\Tabla`. Settings shows the exact folder and provides JSON import/export. Database snapshots alone do not include attachment files; export a JSON backup to keep referenced attachments with your records. This version does not encrypt the database.
 
-The new version normally opens the same default workspace. Keep your backup and previous app folder until you have checked the update. There is no automatic updater.
+See the [user guide](docs/USER_GUIDE.md) for notes, shortcuts, backups and timer behavior, and the [data format](DATA-FORMAT.md) for the portable export contract.
 
-## Troubleshooting
+## Development and packaging
 
-- **Missing files or startup problems:** extract the complete ZIP again and keep `_internal` beside `Tabla.exe`.
-- **TABLA is already open:** check the taskbar and system tray for the existing window.
-- **Publisher warning:** the Windows package is unsigned. Verify its source before deciding whether to run it.
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe scripts/run_tests.py
+.\.venv\Scripts\python.exe scripts/package_release.py
+```
+
+The release command builds the Windows app, checks the packaged executable using disposable data, and creates a versioned portable ZIP and SHA-256 checksum in `release/`. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [release guide](docs/RELEASING.md).
 
 ## Current scope
 
-TABLA is an offline, single-user Windows application. No account or internet connection is required. Cloud sync, collaboration, recurring tasks and mobile apps are not included.
+TABLA is a single-user, offline Windows app. Cloud sync, collaboration, recurring tasks, Google Calendar integration and mobile apps are not included. Calendar times are local and same-day; split events that cross midnight.
 
+## License and credits
+
+TABLA's original source code is available under the [MIT License](LICENSE). Third-party components retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). TABLA uses Python, Qt for Python, SQLite and bundled Inter fonts.

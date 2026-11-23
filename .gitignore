@@ -1,0 +1,39 @@
+# Local runtimes and generated output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+release/
+*.egg-info/
+
+# Personal workspaces, backups and local configuration
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+.env
+.env.*
+!.env.example
+attachments/
+snapshots/
+*.lnk
+
+# Editor and operating system files
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local design history and workstation handoff notes
+design/
+research/
+BUILD-STATUS.md
+TABLA-IMPLEMENTATION-PLAN.md
+TABLA-PRODUCT-FOUNDATION.md
