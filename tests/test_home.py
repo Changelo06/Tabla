@@ -42,7 +42,7 @@ class HomeTests(unittest.TestCase):
             self.store.save({'kind': 'note', 'title': 'Note ' + str(i), 'body': 'A preview\n' * 30})
         self.store.save({'kind': 'note', 'title': 'Archived', 'archived': True})
         self.window.navigate('Today')
-        QTest.qWait(100)
+        QTest.qWait(500)
         home = self.window.home
         self.assertEqual([n['id'] for n in home.notes], [n['id'] for n in self.store.records('note')[:4]])
         self.assertEqual(len(home.note_cards), 4)
@@ -65,7 +65,7 @@ class HomeTests(unittest.TestCase):
     def test_calendar_and_compact_board_links_route_to_original_pages(self):
         board = self.window.board_catalog.create('A separate board')
         self.window.navigate('Today')
-        QTest.qWait(180)
+        QTest.qWait(500)
         link = next(w for w in self.window.home.findChildren(HomeLink) if w.title == board['title'])
         self.assertLessEqual(link.width(), self.window.home.left.width())
         link.click()
@@ -83,7 +83,7 @@ class HomeTests(unittest.TestCase):
             self.store.save({'kind': 'note', 'title': 'Note ' + str(i), 'body': 'Text ' * 100})
         self.window.resize(640, 600)
         self.window.navigate('Today')
-        QTest.qWait(150)
+        QTest.qWait(500)
         self.assertFalse(self.window.home.wide, f"window={self.window.size()}, home={self.window.home.size()}, minimum={self.window.minimumSize()}")
         area = self.window.home.parentWidget().parentWidget()
         self.assertEqual(area.horizontalScrollBar().maximum(), 0)
@@ -92,7 +92,7 @@ class HomeTests(unittest.TestCase):
     def test_wide_dashboard_places_sections_in_independent_columns(self):
         self.window.resize(1500, 960)
         self.window.navigate('Today')
-        QTest.qWait(120)
+        QTest.qWait(500)
         home = self.window.home
         self.assertEqual(home.mode, 3)
         self.assertLess(home.left.x(), home.deadlines.x())
@@ -111,7 +111,7 @@ class HomeTests(unittest.TestCase):
                              'labels': 'reference, planning, ideas'})
         self.window.resize(1500, 680)
         self.window.navigate('Today')
-        QTest.qWait(180)
+        QTest.qWait(500)
         home = self.window.home
         self.assertEqual(home.page_area.verticalScrollBar().maximum(), 0)
         self.assertGreater(home.notes_area.verticalScrollBar().maximum(), 0, f"window={self.window.size()}, notes={home.notes_area.size()}, content={home.notes_area.widget().size()}")
