@@ -11,6 +11,9 @@ def main():
     for key in ("PYTHONPATH", "PYTHONHOME", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH"):
         env.pop(key, None)
     env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QT_FONT_DPI"] = "96"
+    env["QT_SCALE_FACTOR"] = "1"
+    env["PYTHONFAULTHANDLER"] = "1"
     if os.name == "nt":
         windows = Path(os.environ.get("SystemRoot", r"C:\Windows"))
         env["PATH"] = os.pathsep.join(map(str, (Path(sys.executable).parent, Path(sys.base_prefix), windows / "System32", windows)))
@@ -24,6 +27,7 @@ def main():
             result = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", suite.name, "-v"], cwd=ROOT, env=env, timeout=180)
             if result.returncode:
                 failures.append(suite.name)
+                print(f"{suite.name} exited with code {result.returncode}", flush=True)
         except subprocess.TimeoutExpired:
             failures.append(suite.name + " (timeout)")
     print(f"\n{len(suites) - len(failures)}/{len(suites)} test modules passed", flush=True)

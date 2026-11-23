@@ -84,7 +84,7 @@ class HomeTests(unittest.TestCase):
         self.window.resize(640, 600)
         self.window.navigate('Today')
         QTest.qWait(150)
-        self.assertFalse(self.window.home.wide)
+        self.assertFalse(self.window.home.wide, f"window={self.window.size()}, home={self.window.home.size()}, minimum={self.window.minimumSize()}")
         area = self.window.home.parentWidget().parentWidget()
         self.assertEqual(area.horizontalScrollBar().maximum(), 0)
         self.assertGreater(self.window.home.note_cards[-1].y(), self.window.home.note_cards[0].y())
@@ -114,7 +114,7 @@ class HomeTests(unittest.TestCase):
         QTest.qWait(180)
         home = self.window.home
         self.assertEqual(home.page_area.verticalScrollBar().maximum(), 0)
-        self.assertGreater(home.notes_area.verticalScrollBar().maximum(), 0)
+        self.assertGreater(home.notes_area.verticalScrollBar().maximum(), 0, f"window={self.window.size()}, notes={home.notes_area.size()}, content={home.notes_area.widget().size()}")
         watched = [home.calendar, home.board_section, home.deadlines, home.notes_section.layout().itemAt(0).widget()]
         positions = [w.mapToGlobal(QPoint()) for w in watched]
         viewport = home.notes_area.viewport()
