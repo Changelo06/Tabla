@@ -1,5 +1,10 @@
 <p align="center"><img src="docs/screenshots/logo.png" width="80" alt="TABLA logo"></p>
 <h1 align="center">TABLA</h1>
+<p align="center">
+  <img src="https://img.shields.io/badge/Notes-454545?style=flat" alt="Notes">
+  <img src="https://img.shields.io/badge/Offline-454545?style=flat" alt="Offline">
+  <img src="https://img.shields.io/badge/App-454545?style=flat" alt="App">
+</p>
 <p align="center">A little order. A lot more room.</p>
 <p align="center">A local personal workspace for Windows Â· Version 0.9.0</p>
 
