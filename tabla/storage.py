@@ -123,6 +123,23 @@ class Store:
         result = [json.loads(row[0]) for row in self.db.execute(sql, args)]
         return result
 
+    def link_candidates(self, prefix="", kinds=None, limit=80):
+        """Fast SQL-only projection for [[wiki-link]] autocomplete without JSON parsing."""
+        sql = "SELECT id, title, kind FROM records WHERE deleted=0"
+        args = []
+        if kinds:
+            placeholders = ",".join("?" for _ in kinds)
+            sql += f" AND kind IN ({placeholders})"
+            args.extend(kinds)
+        else:
+            sql += " AND kind!='session'"
+        if prefix:
+            sql += " AND title LIKE ? COLLATE NOCASE"
+            args.append(f"%{prefix}%")
+        sql += " ORDER BY updated_at DESC, id LIMIT ?"
+        args.append(int(limit))
+        return [{"id": r[0], "title": r[1], "kind": r[2]} for r in self.db.execute(sql, args)]
+
     def save(self, record):
         record = copy.deepcopy(record)
         if record.get('kind') == 'board':

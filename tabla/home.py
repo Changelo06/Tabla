@@ -7,17 +7,25 @@ from PySide6.QtWidgets import (QWidget, QFrame, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QScrollArea, QSizePolicy)
 from .widgets import label, button, row, scroll, clear
 from .theme import themed_color, icon, polish_surfaces, COLORS
+from .tokens import current_tokens
 
 
 class HomeLink(QPushButton):
+    _TITLE_FONT = None
+    _SUB_FONT = None
+
     def __init__(self, title, subtitle, callback, glyph='board', accent=False, compact=False):
         super().__init__()
+        if HomeLink._TITLE_FONT is None:
+            from .tokens import ui_font
+            HomeLink._TITLE_FONT = ui_font(13, QFont.Weight.DemiBold)
+            HomeLink._SUB_FONT = ui_font(11)
         self.title, self.subtitle, self.glyph, self.accent = title, subtitle, glyph, accent
         self.compact = compact
         self.setAccessibleName(title + (', ' + subtitle if subtitle else ''))
         self.setToolTip(title)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        height = 44 if compact else 60
+        height = 46 if compact else 62
         self.setFixedHeight(height)
         self.setStyleSheet(f'QPushButton {{min-height:{height}px;max-height:{height}px;min-width:0;padding:0;}}')
         self.setMinimumWidth(0)
@@ -25,21 +33,22 @@ class HomeLink(QPushButton):
         self.clicked.connect(callback)
 
     def paintEvent(self, event):
+        t = current_tokens()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
-        bg = '#e8f0fe' if self.isDown() else '#eeeeec' if self.underMouse() else '#f7f7f5'
-        painter.setBrush(QColor(themed_color(bg)))
-        painter.setPen(QPen(QColor('#2383e2' if self.hasFocus() else themed_color('#e9e9e7')), 1))
-        painter.drawRoundedRect(rect, 9, 9)
-        color = '#b55b4f' if self.accent else themed_color('#69645f')
-        icon(self.glyph, color, 18, preserve_color=True).paint(painter, 12, (self.height() - 18) // 2, 18, 18)
-        painter.setFont(QFont('Inter', 10, QFont.Weight.Medium))
-        painter.setPen(QColor(themed_color('#202124')))
-        painter.drawText(42, 18 if self.compact else 25, painter.fontMetrics().elidedText(self.title, Qt.TextElideMode.ElideRight, max(10, self.width() - 60)))
-        painter.setFont(QFont('Inter', 8))
-        painter.setPen(QColor(color if self.accent else themed_color('#69645f')))
-        painter.drawText(42, 34 if self.compact else 44, painter.fontMetrics().elidedText(self.subtitle, Qt.TextElideMode.ElideRight, max(10, self.width() - 60)))
+        bg = t.bg_surface_active if self.isDown() else t.bg_surface_hover if self.underMouse() else t.bg_surface
+        painter.setBrush(QColor(bg))
+        painter.setPen(QPen(QColor(t.accent if self.hasFocus() else t.border_strong if self.underMouse() else t.border_subtle), 1))
+        painter.drawRoundedRect(rect, 12, 12)
+        color = t.danger if self.accent else t.ink_secondary
+        icon(self.glyph, color, 18, preserve_color=True).paint(painter, 13, (self.height() - 18) // 2, 18, 18)
+        painter.setFont(HomeLink._TITLE_FONT)
+        painter.setPen(QColor(t.ink_primary))
+        painter.drawText(42, 19 if self.compact else 26, painter.fontMetrics().elidedText(self.title, Qt.TextElideMode.ElideRight, max(10, self.width() - 56)))
+        painter.setFont(HomeLink._SUB_FONT)
+        painter.setPen(QColor(color if self.accent else t.ink_muted))
+        painter.drawText(42, 35 if self.compact else 45, painter.fontMetrics().elidedText(self.subtitle, Qt.TextElideMode.ElideRight, max(10, self.width() - 56)))
 
 
 class RecentNotes(QWidget):
@@ -67,42 +76,69 @@ class RecentNotes(QWidget):
 
 
 class CalendarDayButton(QPushButton):
+    _FONT_REG = None
+    _FONT_BOLD = None
+
     def __init__(self, day, in_month, colors, callback):
         super().__init__(str(day.day))
+        if CalendarDayButton._FONT_REG is None:
+            from .tokens import ui_font
+            CalendarDayButton._FONT_REG = ui_font(12, QFont.Weight.Normal)
+            CalendarDayButton._FONT_BOLD = ui_font(12, QFont.Weight.DemiBold)
         self.day, self.in_month, self.colors = day, in_month, colors
-        self.setMinimumSize(28, 31)
-        self.setStyleSheet('QPushButton {min-width:0;min-height:31px;padding:0;border:none;background:transparent;}')
+        self.setMinimumSize(30, 34)
+        self.setProperty('tablaThemed', True)
+        self.setStyleSheet('QPushButton {min-width:0;min-height:34px;padding:0;border:none;background:transparent;}')
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clicked.connect(callback)
 
     def paintEvent(self, event):
+        t = current_tokens()
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        cx, cy = self.width() / 2, self.height() / 2 - 1
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0 - 2.0
         today = self.day == date.today()
+        pill = QRectF(cx - 14.0, cy - 12.0, 28.0, 24.0)
+
+        if today:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(t.bg_pill))
+            p.drawRoundedRect(pill, 8.0, 8.0)
+        elif self.colors:
+            accent = QColor(COLORS[self.colors[0]][1])
+            wash = QColor(accent)
+            wash.setAlpha(38 if t.dark else 26)
+            edge = QColor(accent)
+            edge.setAlpha(110 if (self.underMouse() or self.hasFocus()) else 68)
+            p.setBrush(wash)
+            p.setPen(QPen(edge, 1.0))
+            p.drawRoundedRect(pill, 8.0, 8.0)
+        elif self.isDown() or self.underMouse() or self.hasFocus():
+            p.setBrush(QColor(t.bg_surface_active if self.isDown() else t.bg_surface_hover))
+            p.setPen(QPen(QColor(t.accent if self.hasFocus() else t.border_strong), 1.0))
+            p.drawRoundedRect(pill, 8.0, 8.0)
+
+        if today:
+            text_color = QColor(t.ink_inverse)
+        elif self.in_month:
+            text_color = QColor(t.ink_primary)
+        else:
+            text_color = QColor(t.ink_muted)
+            text_color.setAlpha(120)
+        p.setPen(text_color)
+        p.setFont(CalendarDayButton._FONT_BOLD if (today or self.colors) else CalendarDayButton._FONT_REG)
+        p.drawText(pill, Qt.AlignmentFlag.AlignCenter, str(self.day.day))
+
         if self.colors:
-            color = QColor(COLORS[self.colors[0]][1])
-            p.setPen(Qt.PenStyle.NoPen)
-            for radius, alpha in ((15, 14), (13.5, 20), (12, 30)):
-                tint = QColor(color)
-                tint.setAlpha(alpha)
-                p.setBrush(tint)
-                p.drawEllipse(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(color, 1))
-            p.drawEllipse(QRectF(cx - 12, cy - 12, 24, 24))
-        if today or self.isDown() or self.underMouse() or self.hasFocus():
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor('#2383e2' if today else themed_color('#e8e6e2')))
-            p.drawEllipse(QRectF(cx - 10.5, cy - 10.5, 21, 21))
-        p.setPen(QColor('#fdfdfd' if today else themed_color('#37352f' if self.in_month else '#a5a5a0')))
-        p.setFont(self.font())
-        p.drawText(QRectF(0, cy - 10, self.width(), 20), Qt.AlignmentFlag.AlignCenter, str(self.day.day))
-        for index, name in enumerate(self.colors[:3]):
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(COLORS[name][1]))
-            x = cx + (index - (min(3, len(self.colors)) - 1) / 2) * 5
-            p.drawEllipse(QRectF(x - 1.5, self.height() - 4, 3, 3))
+            shown = self.colors[:3]
+            dot_y = self.height() - 4.0
+            for index, name in enumerate(shown):
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(COLORS[name][1]))
+                x = cx + (index - (len(shown) - 1) / 2.0) * 5.2
+                p.drawEllipse(QRectF(x - 1.6, dot_y - 1.6, 3.2, 3.2))
+        p.end()
 
 
 class MiniCalendar(QFrame):
@@ -132,14 +168,25 @@ class MiniCalendar(QFrame):
         self.setAccessibleName('Mini calendar')
         self.setMinimumWidth(270)
         self.setMaximumWidth(340)
+        t = current_tokens()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(6)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
         self.heading = button('', self.open_month, 'text')
         self.heading.setAccessibleName('Open month in Calendar')
-        layout.addLayout(row(self.heading, None,
-            button('', lambda: self.move(-1), 'text', 'left'),
-            button('', lambda: self.move(1), 'text', 'right'), spacing=4))
+        self.heading.setProperty('tablaThemed', True)
+        self.heading.setStyleSheet(f'QPushButton {{font-size:14px;font-weight:600;color:{t.ink_primary};padding:3px 4px;border-radius:7px;}} QPushButton:hover {{background:{t.bg_surface_hover};}}')
+        prev_btn = button('', lambda: self.move(-1), 'text', 'left')
+        next_btn = button('', lambda: self.move(1), 'text', 'right')
+        for nav in (prev_btn, next_btn):
+            nav.setFixedSize(26, 26)
+            nav.setToolTip('Previous month' if nav is prev_btn else 'Next month')
+        layout.addLayout(row(self.heading, None, prev_btn, next_btn, spacing=2))
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setProperty('tablaThemed', True)
+        sep.setStyleSheet(f'background:{t.border_subtle};border:none;')
+        layout.addWidget(sep)
         self.days = QGridLayout()
         self.days.setSpacing(2)
         layout.addLayout(self.days)
@@ -149,9 +196,12 @@ class MiniCalendar(QFrame):
         clear(self.days)
         self.day_buttons = {}
         self.heading.setText(self.month.strftime('%B %Y'))
-        for column, name in enumerate(('S', 'M', 'T', 'W', 'T', 'F', 'S')):
+        t = current_tokens()
+        for column, name in enumerate(('Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa')):
             text = label(name, 'muted')
             text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            text.setProperty('tablaThemed', True)
+            text.setStyleSheet(f'font-size:11px;font-weight:600;color:{t.ink_muted};padding:2px 0 4px 0;')
             self.days.addWidget(text, 0, column)
         cal = calendar.Calendar(firstweekday=6)
         for week, dates in enumerate(cal.monthdatescalendar(self.month.year, self.month.month), 1):
@@ -188,8 +238,13 @@ class HomeDashboard(QWidget):
     def __init__(self, owner):
         super().__init__()
         self.owner = owner
+        t = current_tokens()
         self.setObjectName('homeDashboard')
-        self.setStyleSheet('QFrame#homeCalendar {border:1px solid #e9e9e7;border-radius:12px;background:#f7f7f5;} QFrame#homeSectionHeader {border:none;border-radius:6px;background:#f7f7f5;}')
+        self.setProperty('tablaThemed', True)
+        self.setStyleSheet(
+            f'QFrame#homeCalendar {{border:1px solid {t.border_subtle};border-radius:14px;background:{t.bg_surface};}}'
+            f'QFrame#homeSectionHeader {{border:none;border-bottom:1px solid {t.border_subtle};border-radius:0;background:transparent;}}'
+        )
         self.grid = QGridLayout(self)
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setHorizontalSpacing(24)

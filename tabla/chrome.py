@@ -8,47 +8,57 @@ from .theme import icon, polish_surfaces
 
 
 class WindowControl(QPushButton):
-    """Small traffic light, full-height rectangular pointer target."""
-    def __init__(self, action, color, tip, callback, parent=None):
+    """Native Windows 11-style caption button (Minimize, Maximize/Restore, Close)."""
+    def __init__(self, action, tip, callback, parent=None):
         super().__init__(parent)
-        self.action, self.color = action, color
-        self.setObjectName('trafficLight')
-        self.setFixedSize(48, 43)
+        self.action = action
+        self.setObjectName('windowControl')
+        self.setFixedSize(46, 43)
         self.setToolTip(tip)
         self.setAccessibleName(tip)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.clicked.connect(callback)
 
     def paintEvent(self, event):
+        from .tokens import current_tokens
+        t = current_tokens()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         hovered = self.underMouse() or bool(self.property('nativeHover'))
-        color = QColor(self.color)
-        if hovered or self.isDown():
-            tint = QColor(color)
-            tint.setAlpha(34 if self.isDown() else 20)
+        pressed = self.isDown()
+        if self.action == 'close' and (hovered or pressed):
+            bg = QColor('#b32619' if pressed else '#c42b1c')
+            fg = QColor('#ffffff')
+        elif pressed:
+            bg = QColor(t.bg_surface_active)
+            fg = QColor(t.ink_primary)
+        elif hovered:
+            bg = QColor(t.bg_surface_hover)
+            fg = QColor(t.ink_primary)
+        else:
+            bg = None
+            fg = QColor(t.ink_secondary)
+        if bg is not None:
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(tint)
-            painter.drawRoundedRect(QRectF(self.rect()).adjusted(2, 3, -2, -3), 8, 8)
-        if self.isDown():
-            color = color.darker(115)
-        painter.setBrush(color)
-        painter.setPen(QPen(color.darker(112), .7))
-        x, y = self.width() / 2, self.height() / 2
-        painter.drawEllipse(QRectF(x - 8, y - 8, 16, 16))
-        if hovered:
-            painter.setPen(QPen(QColor('#292b2e'), 1.35, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-            if self.action == 'minimize':
-                painter.drawLine(int(x - 3), int(y), int(x + 3), int(y))
-            elif self.action == 'maximize':
-                if self.window().isMaximized():
-                    painter.drawRoundedRect(QRectF(x - 3, y - 3, 6, 6), .7, .7)
-                else:
-                    painter.drawLine(int(x - 3), int(y), int(x + 3), int(y))
-                    painter.drawLine(int(x), int(y - 3), int(x), int(y + 3))
-            elif self.action == 'close':
-                painter.drawLine(int(x - 2), int(y - 2), int(x + 2), int(y + 2))
-                painter.drawLine(int(x + 2), int(y - 2), int(x - 2), int(y + 2))
+            painter.setBrush(bg)
+            painter.drawRect(self.rect())
+        cx, cy = self.width() / 2.0, self.height() / 2.0
+        painter.setPen(QPen(fg, 1.15, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        if self.action == 'minimize':
+            painter.drawLine(QRectF(cx - 5, cy + 0.5, 10, 0).topLeft(), QRectF(cx - 5, cy + 0.5, 10, 0).topRight())
+        elif self.action == 'maximize':
+            if self.window().isMaximized():
+                # Windows 11 overlapping restore squares
+                painter.drawRoundedRect(QRectF(cx - 4.5, cy - 2.5, 7.5, 7.5), 1.0, 1.0)
+                painter.drawLine(QRectF(cx - 2.2, cy - 4.5, 7.2, 0).topLeft(), QRectF(cx - 2.2, cy - 4.5, 7.2, 0).topRight())
+                painter.drawLine(QRectF(cx + 5.0, cy - 4.5, 0, 7.2).topLeft(), QRectF(cx + 5.0, cy - 4.5, 0, 7.2).bottomLeft())
+            else:
+                painter.drawRoundedRect(QRectF(cx - 4.8, cy - 4.8, 9.6, 9.6), 1.3, 1.3)
+        elif self.action == 'close':
+            painter.drawLine(QRectF(cx - 4.5, cy - 4.5, 9, 9).topLeft(), QRectF(cx - 4.5, cy - 4.5, 9, 9).bottomRight())
+            painter.drawLine(QRectF(cx - 4.5, cy - 4.5, 9, 9).topRight(), QRectF(cx - 4.5, cy - 4.5, 9, 9).bottomLeft())
+        painter.end()
 
 
 class TitleBar(QFrame):
@@ -103,7 +113,7 @@ class TitleBar(QFrame):
         search_layout.addStretch()
         self.search = QLineEdit()
         self.search.setObjectName('titleSearch')
-        self.search.setPlaceholderText('Search')
+        self.search.setPlaceholderText('Search  ·  Ctrl+K')
         self.search.setAccessibleName('Search workspace')
         self.search.setToolTip('Search notes, tasks, projects and meetings · Enter to search · Ctrl+K')
         self.search.setClearButtonEnabled(True)
@@ -118,9 +128,9 @@ class TitleBar(QFrame):
         search_layout.addWidget(self.search, 4)
         search_layout.addStretch()
         layout.addWidget(self.drag_area, 1)
-        self.minimize = WindowControl('minimize', '#febc2e', 'Minimize', window.showMinimized, self)
-        self.maximize = WindowControl('maximize', '#28c840', 'Maximize', self.toggle_maximize, self)
-        self.close_button = WindowControl('close', '#ff5f57', 'Close Tabla', window.close, self)
+        self.minimize = WindowControl('minimize', 'Minimize', window.showMinimized, self)
+        self.maximize = WindowControl('maximize', 'Maximize', self.toggle_maximize, self)
+        self.close_button = WindowControl('close', 'Close Tabla', window.close, self)
         controls = QWidget(self)
         controls_layout = QHBoxLayout(controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
@@ -203,8 +213,25 @@ class TitleBar(QFrame):
         for title, lines in (('Short · 3 lines', 3), ('Standard · 6 lines', 6), ('Natural · 14 lines', 14)):
             previews.addAction(title, lambda checked=False, n=lines: w.set_note_preview_lines(n))
         view.addSeparator()
-        view.addAction('Light appearance', lambda: w.set_appearance('Light'))
-        view.addAction('Dark appearance', lambda: w.set_appearance('Dark'))
+        from .tokens import THEME_PRESETS, resolve_theme
+        appearance_menu = view.addMenu('Appearance')
+        self.appearance_actions = {}
+        last_dark = None
+        for preset in THEME_PRESETS:
+            if last_dark is False and preset.dark:
+                appearance_menu.addSeparator()
+            last_dark = preset.dark
+            action = appearance_menu.addAction(
+                f'{preset.label} · {preset.tagline}',
+                lambda checked=False, k=preset.key: w.set_appearance(k),
+            )
+            action.setCheckable(True)
+            self.appearance_actions[preset.key] = action
+        def _sync_appearance_menu():
+            cur = resolve_theme(w.store.setting('appearance', 'light')).key
+            for k, act in self.appearance_actions.items():
+                act.setChecked(k == cur)
+        appearance_menu.aboutToShow.connect(_sync_appearance_menu)
         layout = self.menus['Layout']
         layout.addAction('Toggle icon sidebar', w.toggle_sidebar)
         layout.addAction('Notes as cards', lambda: w.show_note_layout('Grid'))
@@ -219,6 +246,10 @@ class TitleBar(QFrame):
         self.reduce_motion.setCheckable(True)
         self.reduce_motion.setChecked(bool(w.store.setting('reduce_motion', False)))
         self.reduce_motion.toggled.connect(w.set_reduce_motion)
+        self.tactile_sound = settings.addAction('Tactile micro-sounds')
+        self.tactile_sound.setCheckable(True)
+        self.tactile_sound.setChecked(bool(w.store.setting('tactile_sound', False)))
+        self.tactile_sound.toggled.connect(w.set_tactile_sound)
         help = self.menus['Help']
         help.addAction('Quick guide', w.show_help)
         help.addAction('Keyboard shortcuts', w.show_shortcuts)
@@ -253,8 +284,10 @@ class TitleBar(QFrame):
         self.back.setEnabled(getattr(w, '_history_index', 0) > 0)
         self.forward.setEnabled(getattr(w, '_history_index', 0) < len(getattr(w, '_history', [])) - 1)
         if hasattr(self, 'maximize'):
-            self.maximize.setIcon(icon('restore' if w.isMaximized() else 'maximize'))
             self.maximize.setToolTip('Restore window' if w.isMaximized() else 'Maximize')
+        for ctrl in (getattr(self, 'minimize', None), getattr(self, 'maximize', None), getattr(self, 'close_button', None)):
+            if ctrl is not None:
+                ctrl.update()
 
     def toggle_maximize(self):
         self.owner.showNormal() if self.owner.isMaximized() else self.owner.showMaximized()

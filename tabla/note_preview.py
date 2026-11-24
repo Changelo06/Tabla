@@ -11,9 +11,10 @@ class NotePreview(QWidget):
         self.text = text[:characters] + ('…' if len(text) > characters else '')
         self.line_limit = lines
         self.title = title
+        from .tokens import ui_font
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setFont(QFont('Inter', 10 if title else 9, QFont.Weight.Medium if title else QFont.Weight.Normal))
+        self.setFont(ui_font(14 if title else 13, QFont.Weight.DemiBold if title else QFont.Weight.Normal))
         self.setAccessibleName(self.text)
 
     def hasHeightForWidth(self):
@@ -48,9 +49,11 @@ class NotePreview(QWidget):
         return QSize(230, self.heightForWidth(max(80, self.width())))
 
     def paintEvent(self, event):
+        from .tokens import current_tokens
+        t = current_tokens()
         layout, _ = self.layout_text(self.width())
         painter = QPainter(self)
-        painter.setPen(themed_color('#202124'))
+        painter.setPen(t.ink_primary if self.title else t.ink_secondary)
         painter.setFont(self.font())
         for index in range(layout.lineCount()):
             line = layout.lineAt(index)

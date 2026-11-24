@@ -35,7 +35,7 @@ class AttachmentPanel(QWidget):
     def add_paths(self, paths):
         try:
             if len(self.items) + len(paths) > 100:
-                raise ValueError('A note can have up to 100 attachments.')
+                raise ValueError('Up to 100 attachments are supported per item.')
             imported = self.vault.import_files(paths)
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, 'Could not attach files', str(exc))

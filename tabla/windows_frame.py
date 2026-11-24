@@ -8,6 +8,30 @@ def available():
     return sys.platform == 'win32' and QApplication.instance().platformName() == 'windows'
 
 
+def apply_dwm(window, dark=None):
+    """Apply Windows 11 DWM rounded corners, dark titlebar frame, and hairline border."""
+    if not available():
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        from .tokens import current_tokens
+        t = current_tokens(dark)
+        dwmapi = ctypes.windll.dwmapi
+        hwnd = int(window.winId())
+        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        dark_val = ctypes.c_int(1 if t.dark else 0)
+        dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 20, ctypes.byref(dark_val), ctypes.sizeof(dark_val))
+        # DWMWA_WINDOW_CORNER_PREFERENCE = 33 -> DWMWCP_ROUND = 2
+        corner_pref = ctypes.c_int(2)
+        dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 33, ctypes.byref(corner_pref), ctypes.sizeof(corner_pref))
+        # DWMWA_BORDER_COLOR = 34 (COLORREF is 0x00BBGGRR)
+        border_bgr = ctypes.c_uint(0x002A2A2E if t.dark else 0x00E4E4E8)
+        dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 34, ctypes.byref(border_bgr), ctypes.sizeof(border_bgr))
+    except Exception:
+        pass
+
+
 def configure(window):
     if not available():
         return
@@ -16,6 +40,7 @@ def configure(window):
     api = ctypes.windll.user32
     hwnd = int(window.winId())
     if getattr(window, '_snap_hwnd', None) == hwnd:
+        apply_dwm(window)
         return
     window._snap_hwnd = hwnd
     api.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
@@ -25,6 +50,7 @@ def configure(window):
     # Retain the native sizing/maximize capabilities that Windows Snap expects.
     api.SetWindowLongW(hwnd, -16, style | 0x00040000 | 0x00030000)
     api.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0037)
+    apply_dwm(window)
 
 
 def handle(window, message):

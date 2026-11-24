@@ -1,13 +1,14 @@
 """Card-first board: independent scrollable lists and precise persistent moves."""
 from datetime import date
 import copy
-from PySide6.QtCore import Qt, Signal, QSize, QMimeData, QPoint, QRectF, QTimer
+from PySide6.QtCore import Qt, Signal, QSize, QMimeData, QPoint, QPointF, QRectF, QTimer
 from PySide6.QtGui import QDrag, QPainter, QColor, QFont, QPen, QTextLayout, QTextOption
 from PySide6.QtWidgets import (QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QStyledItemDelegate, QAbstractItemView, QMenu, QStyle,
     QPushButton, QMessageBox, QScrollArea)
 from .widgets import button, label, row, clear
 from .theme import COLORS, themed_color, polish_surfaces
+from .tokens import current_tokens
 from .board_model import BoardModel
 
 CARD_MIME = 'application/x-tabla-card'
@@ -15,12 +16,20 @@ LIST_MIME = 'application/x-tabla-list'
 
 
 class CardDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from .tokens import ui_font
+        self._title_font = ui_font(13, QFont.Weight.Medium)
+        self._title_font_key = self._title_font.toString()
+        self._tag_font = ui_font(11, QFont.Weight.Medium)
+        self._meta_font = ui_font(11)
+        self._title_cache = {}
+
     def title_layout(self, text, width):
-        key = (text, width, QFont('Inter', 10).toString())
-        cache = getattr(self, '_title_cache', {})
-        if key in cache:
-            return cache[key]
-        layout = QTextLayout(text, QFont('Inter', 10))
+        key = (text, width, self._title_font_key)
+        if key in self._title_cache:
+            return self._title_cache[key]
+        layout = QTextLayout(text, self._title_font)
         option = QTextOption()
         option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
         layout.setTextOption(option)
@@ -31,13 +40,12 @@ class CardDelegate(QStyledItemDelegate):
             if not line.isValid():
                 break
             line.setLineWidth(max(70, width))
-            line.setPosition(__import__('PySide6.QtCore', fromlist=['QPointF']).QPointF(0, y))
+            line.setPosition(QPointF(0, y))
             y += line.height()
         layout.endLayout()
-        if len(cache) > 1200:
-            cache.clear()
-        cache[key] = layout, y
-        self._title_cache = cache
+        if len(self._title_cache) > 1200:
+            self._title_cache.clear()
+        self._title_cache[key] = (layout, y)
         return layout, y
 
     def sizeHint(self, option, index):
@@ -48,41 +56,52 @@ class CardDelegate(QStyledItemDelegate):
 
     def paint(self, painter, option, index):
         record = index.data(Qt.ItemDataRole.UserRole) or {}
+        t = current_tokens()
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(option.rect).adjusted(4, 3, -4, -4)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 12))
-        painter.drawRoundedRect(rect.translated(0, 1.5), 8, 8)
-        selected = bool(option.state & (QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver | QStyle.StateFlag.State_HasFocus))
-        painter.setPen(QPen(QColor('#2383e2' if selected else themed_color('#e4e4e1')), 1))
-        painter.setBrush(QColor(themed_color('#ffffff')))
-        painter.drawRoundedRect(rect, 8, 8)
+        painter.setBrush(QColor(0, 0, 0, 26 if t.dark else 10))
+        painter.drawRoundedRect(rect.translated(0, 1.5), 11, 11)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        focused = bool(option.state & (QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_HasFocus))
+        border_color = t.accent if focused else (t.border_strong if hovered else t.border_subtle)
+        painter.setPen(QPen(QColor(border_color), 1))
+        painter.setBrush(QColor(t.bg_elevated))
+        painter.drawRoundedRect(rect, 11, 11)
         x, y = rect.x() + 12, rect.y() + 11
         if record.get('cover'):
             bg = COLORS.get(record['cover'], COLORS['blue'])[0]
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(themed_color(bg)))
-            painter.drawRoundedRect(QRectF(x, y - 3, rect.width() - 24, 6), 3, 3)
+            painter.drawRoundedRect(QRectF(x, y - 3, rect.width() - 24, 5), 2.5, 2.5)
             y += 10
+        painter.setFont(self._tag_font)
+        tag_fm = painter.fontMetrics()
+        max_x = rect.right() - 32
         for tag in record.get('task_labels', [])[:3]:
             bg = COLORS.get(tag['color'], COLORS['blue'])[0]
+            chip_w = min(96, max(36, tag_fm.horizontalAdvance(tag['name']) + 14))
+            if x + chip_w > max_x:
+                chip_w = max(32, int(max_x - x))
+            if chip_w < 28:
+                break
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(themed_color(bg)))
-            painter.drawRoundedRect(QRectF(x, y, 66, 17), 4, 4)
-            painter.setPen(QColor(themed_color('#37352f')))
-            painter.setFont(QFont('Inter', 8, QFont.Weight.Medium))
-            painter.drawText(QRectF(x + 5, y, 56, 17), Qt.AlignmentFlag.AlignVCenter,
-                painter.fontMetrics().elidedText(tag['name'], Qt.TextElideMode.ElideRight, 56))
-            x += 71
+            painter.drawRoundedRect(QRectF(x, y, chip_w, 18), 6, 6)
+            painter.setPen(QColor(t.ink_primary))
+            painter.drawText(QRectF(x + 7, y, chip_w - 14, 18), Qt.AlignmentFlag.AlignVCenter,
+                tag_fm.elidedText(tag['name'], Qt.TextElideMode.ElideRight, int(chip_w - 14)))
+            x += chip_w + 5
         if len(record.get('task_labels', [])) > 3:
-            painter.drawText(QRectF(x, y, 24, 17), Qt.AlignmentFlag.AlignVCenter, '+' + str(len(record['task_labels']) - 3))
+            painter.setPen(QColor(t.ink_muted))
+            painter.drawText(QRectF(x, y, 24, 18), Qt.AlignmentFlag.AlignVCenter, '+' + str(len(record['task_labels']) - 3))
         if record.get('task_labels'):
             y += 24
         x = rect.x() + 12
         layout, height = self.title_layout(record.get('title', ''), rect.width() - 28)
-        painter.setPen(QColor(themed_color('#37352f')))
-        layout.draw(painter, __import__('PySide6.QtCore', fromlist=['QPointF']).QPointF(x, y))
+        painter.setPen(QColor(t.ink_primary))
+        layout.draw(painter, QPointF(x, y))
         y += height + 10
         bits = []
         due = record.get('date')
@@ -101,8 +120,9 @@ class CardDelegate(QStyledItemDelegate):
                 bits.append('≡ Description')
             elif record.get('priority', 'Medium') != 'Medium':
                 bits.append(record.get('priority', '') + ' priority')
-        painter.setFont(QFont('Inter', 8))
-        painter.setPen(QColor(themed_color('#b63b50' if due and due < date.today().isoformat() and record.get('status') != 'Done' else '#696864')))
+        painter.setFont(self._meta_font)
+        overdue = bool(due and due < date.today().isoformat() and record.get('status') != 'Done')
+        painter.setPen(QColor(t.danger if overdue else t.ink_muted))
         text = ' · '.join(bits)
         painter.drawText(QRectF(x, y, rect.width() - 24, 18), Qt.AlignmentFlag.AlignVCenter,
             painter.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, int(rect.width() - 24)))
@@ -180,6 +200,17 @@ class CardList(QListWidget):
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - 24)
         elif point.y() > self.viewport().height() - 28:
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() + 24)
+        # Horizontal drag-edge autoscroll on enclosing TaskBoard canvas
+        board = self.parentWidget()
+        while board is not None and not isinstance(board, QScrollArea):
+            board = board.parentWidget()
+        if board is not None:
+            bx = board.viewport().mapFromGlobal(self.viewport().mapToGlobal(point)).x()
+            hbar = board.horizontalScrollBar()
+            if bx < 56:
+                hbar.setValue(hbar.value() - 28)
+            elif bx > board.viewport().width() - 56:
+                hbar.setValue(hbar.value() + 28)
         self.viewport().update()
         event.acceptProposedAction()
 
@@ -207,10 +238,14 @@ class CardList(QListWidget):
 
 class ListGrip(QPushButton):
     def __init__(self, column):
-        super().__init__('⠿')
+        from .theme import icon
+        super().__init__('')
         self.column = column
         self.setObjectName('text')
-        self.setFixedWidth(20)
+        self.setIcon(icon('grip', size=16))
+        self.setIconSize(QSize(16, 16))
+        self.setFixedSize(22, 24)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setToolTip('Drag list to reorder')
         self.setAccessibleName('Drag ' + column['title'] + ' list')
         self.origin = None
@@ -505,7 +540,9 @@ class TaskBoard(QScrollArea):
 
     def move_card(self, card_id, column, before=None):
         if card_id != before:
+            from . import foley
             self.model.move_card(card_id, column, before)
+            foley.play('click')
             self.reload()
 
     def list_menu(self, column, anchor):

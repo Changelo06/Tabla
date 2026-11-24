@@ -19,7 +19,7 @@ from .dialogs import ItemDialog, NoteDialog, TimerSettingsDialog
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, store):
+    def __init__(self, store, defer_render=False):
         super().__init__()
         self.store = store
         self.timer = FocusTimer(store)
@@ -73,13 +73,16 @@ class MainWindow(QMainWindow):
         self.pulse = QTimer(self)
         self.pulse.setInterval(250)
         self.pulse.timeout.connect(self.tick)
-        self.pulse.start()
+        if self.timer.data.get("running"):
+            self.pulse.start()
+        self._last_timer_running = None
         for sequence, callback in (("Ctrl+N", self.new_note), ("Ctrl+Shift+T", self.new_task),
                                    ("Ctrl+K", self.focus_search), ("Ctrl+1", lambda: self.navigate("Today")),
                                    ("Ctrl+2", lambda: self.navigate("Calendar"))):
             QShortcut(QKeySequence(sequence), self, activated=callback)
-        self.render_sidebar()
-        self.render()
+        if not defer_render:
+            self.render_sidebar()
+            self.render()
         self._layout_class = (self.width() >= 1360, self.height() < 850, self.width() >= 1550)
         self.resize_debounce = QTimer(self)
         self.resize_debounce.setSingleShot(True)
@@ -603,8 +606,11 @@ class MainWindow(QMainWindow):
     def toggle_timer(self):
         if self.timer.data["running"]:
             self.timer.pause()
+            self.pulse.stop()
         else:
             self.timer.start()
+            if not self.pulse.isActive():
+                self.pulse.start()
         self.tick()
 
     def timer_mode(self, mode):
@@ -612,6 +618,7 @@ class MainWindow(QMainWindow):
             if QMessageBox.question(self, "Change timer", "End this session and switch timer mode? Time already spent will stay in history.") != QMessageBox.StandardButton.Yes:
                 return
         self.timer.switch(mode)
+        self.pulse.stop()
         self.render()
 
     def timer_prefs(self):
@@ -663,23 +670,35 @@ class MainWindow(QMainWindow):
             self.render_context()
 
     def tick(self):
+        from .tokens import current_tokens
         completed = self.timer.finish_if_due()
         if completed:
-            QApplication.beep()
+            from . import foley
+            self.pulse.stop()
+            if foley.enabled():
+                foley.play("brass")
+            else:
+                QApplication.beep()
             if self.tray.isVisible():
                 self.tray.showMessage("tabla · " + completed + " complete", "Ready for " + self.timer.data["mode"].lower() + ". Start when you're ready.")
             self.statusBar().showMessage(completed + " complete. Your next timer is ready.", 15000)
             self.render()
+        running = bool(self.timer.data["running"])
+        if not running and self.pulse.isActive():
+            self.pulse.stop()
         for ring in self.findChildren(TimerRing):
             ring.update()
-        from PySide6.QtWidgets import QPushButton
-        for btn in self.findChildren(QPushButton):
-            if btn.property("timerToggle"):
-                btn.setText("Pause" if self.timer.data["running"] else "Start")
-                btn.setIcon(icon("pause" if self.timer.data["running"] else "play", "#ffffff"))
-        for picker in self.findChildren(QComboBox):
-            if picker.objectName() == "focusTaskPicker":
-                picker.setEnabled(not self.timer.data["running"])
+        if self._last_timer_running != running:
+            self._last_timer_running = running
+            t = current_tokens()
+            from PySide6.QtWidgets import QPushButton
+            for btn in self.findChildren(QPushButton):
+                if btn.property("timerToggle"):
+                    btn.setText("Pause" if running else "Start")
+                    btn.setIcon(icon("pause" if running else "play", t.ink_inverse, preserve_color=True))
+            for picker in self.findChildren(QComboBox):
+                if picker.objectName() == "focusTaskPicker":
+                    picker.setEnabled(not running)
 
     def agenda_item(self, item):
         card, v = panel("agendaRow", 8)

@@ -31,7 +31,8 @@ def main(argv=None):
     app.setWindowIcon(application_icon())
     app.setStyle("Fusion")
     load_fonts()
-    app.setFont(QFont("Inter", 10))
+    from .tokens import ui_font
+    app.setFont(ui_font(13))
     app.setStyleSheet(STYLE)
     directory = args.data_dir or Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)) / "Tabla"
     directory.mkdir(parents=True, exist_ok=True)
@@ -59,17 +60,17 @@ def main(argv=None):
         QMessageBox.critical(None, "Could not open Tabla", f"Your existing files have not been replaced.\n\n{exc}\n\nData folder: {directory}")
         lock.unlock()
         return 1
-    window = MainWindow(store)
+    window = MainWindow(store, defer_render=True)
 
     def exception_hook(exc_type, value, traceback):
         logging.error("Application error", exc_info=(exc_type, value, traceback))
         QMessageBox.warning(app.activeWindow(), "Tabla needs your attention", "An action could not be completed. Your last saved data is still on this device.\n\n" + str(value))
 
     sys.excepthook = exception_hook
-    window.navigate(args.page)
     if not args.screenshot:
         available = app.primaryScreen().availableGeometry()
         window.resize(min(1500, max(1040, available.width() - 60)), min(960, max(700, available.height() - 65)))
+    window.navigate(args.page)
     window.show()
 
     def capture():

@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from PySide6.QtCore import Qt, QUrl, Signal, QStringListModel, QRectF, QPointF
+from PySide6.QtCore import Qt, QUrl, Signal, QStringListModel, QRectF, QPointF, QPoint, QSize
 from PySide6.QtGui import (QTextCursor, QTextCharFormat, QTextBlockFormat, QTextImageFormat,
     QTextTable, QTextTableFormat, QTextFrameFormat, QTextLength, QTextListFormat,
-    QTextDocument, QFont, QColor, QImage, QPainter, QPen, QKeySequence, QTextDocumentFragment)
+    QTextDocument, QFont, QColor, QImage, QImageReader, QPixmap, QPolygonF, QPainter, QPen,
+    QKeySequence, QTextDocumentFragment)
 from PySide6.QtWidgets import QTextEdit, QCompleter, QMenu, QInputDialog, QMessageBox
 from .widgets import LinkEditor
 
@@ -153,8 +154,8 @@ def decode_nodes(cursor, nodes):
             block = QTextBlockFormat()
             block.setAlignment(Qt.AlignmentFlag(n.get('alignment', 1)))
             block.setHeadingLevel(n.get('heading', 0))
-            block.setBottomMargin(5)
-            block.setLineHeight(135, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
+            block.setBottomMargin(7)
+            block.setLineHeight(152, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
             if n.get('check'):
                 block.setMarker(QTextBlockFormat.MarkerType(n['check']))
             cursor.setBlockFormat(block)
@@ -229,7 +230,9 @@ class RichNoteEditor(QTextEdit):
         self.store = store
         self.setObjectName('noteEditor')
         self.setAcceptRichText(False)  # Pasted web markup never becomes an external resource.
-        self.setStyleSheet('QTextEdit#noteEditor {background:transparent;border:none;padding:6px;font-size:14px;}')
+        from .tokens import prose_font
+        self.setFont(prose_font(15))
+        self.setStyleSheet('QTextEdit#noteEditor {background:transparent;border:none;padding:6px;font-size:15px;}')
         self.setWordWrapMode(__import__('PySide6.QtGui', fromlist=['QTextOption']).QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
         self.document().setDocumentMargin(8)
         self.link_targets, self.candidates, self._start = {}, {}, None
@@ -265,7 +268,12 @@ class RichNoteEditor(QTextEdit):
         self.link_targets = dict(record.get('link_targets', {}))
         for item in record.get('attachments', []):
             if item.get('mime', '').startswith('image/'):
-                image = QImage(str(self.store.attachments.path_for(item)))
+                reader = QImageReader(str(self.store.attachments.path_for(item)))
+                reader.setAutoTransform(True)
+                sz = reader.size()
+                if sz.isValid() and max(sz.width(), sz.height()) > 1440:
+                    reader.setScaledSize(sz.scaled(QSize(1440, 1440), Qt.AspectRatioMode.KeepAspectRatio))
+                image = reader.read()
                 if not image.isNull():
                     self.document().addResource(QTextDocument.ResourceType.ImageResource, QUrl('tabla-asset:' + item['key']), image)
         if record.get('document'):
@@ -619,34 +627,59 @@ class RichNoteEditor(QTextEdit):
         self.pattern_strength = max(.04, min(.25, strength))
         self.viewport().update()
 
+    def _pattern_tile(self, template, spacing, strength, ink_rgba, dpr):
+        key = (template, spacing, round(strength, 3), ink_rgba, round(dpr, 2))
+        if getattr(self, '_pattern_key', None) == key:
+            return self._pattern_cache
+        tile_w = 65 if template == 'paper' else spacing
+        tile_h = 65 if template == 'paper' else spacing
+        pm = QPixmap(max(1, round(tile_w * dpr)), max(1, round(tile_h * dpr)))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        color = QColor.fromRgba(ink_rgba)
+        color.setAlphaF(strength)
+        p.setPen(QPen(color, 0.65))
+        if template == 'lines':
+            p.drawLine(0, spacing - 1, tile_w, spacing - 1)
+        elif template == 'grid':
+            p.drawLine(0, spacing - 1, tile_w, spacing - 1)
+            p.drawLine(0, 0, 0, tile_h)
+        elif template == 'dots':
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setBrush(color)
+            p.drawEllipse(QRectF(spacing / 2 - 0.75, spacing / 2 - 0.75, 1.5, 1.5))
+        elif template == 'diamonds':
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setBrush(color)
+            cx, cy = spacing / 2, spacing / 2
+            p.drawPolygon(QPolygonF([QPointF(cx, cy - 1.4), QPointF(cx + 1.4, cy), QPointF(cx, cy + 1.4), QPointF(cx - 1.4, cy)]))
+        elif template == 'paper':
+            for y in range(0, tile_h, 5):
+                for x in range((y * 7) % 13, tile_w, 13):
+                    p.drawPoint(x, y)
+        p.end()
+        self._pattern_key = key
+        self._pattern_cache = pm
+        return pm
+
     def paintEvent(self, event):
         if self.template != 'none':
             painter = QPainter(self.viewport())
-            color = self.palette().text().color()
-            color.setAlphaF(self.pattern_strength)
-            painter.setPen(QPen(color, .65))
             spacing = self.pattern_spacing
+            # Lock standard ruled-paper spacing cleanly to the editor's prose line rhythm
+            if self.template == 'lines' and spacing == 24:
+                spacing = max(18, round(self.fontMetrics().lineSpacing() * 1.52))
             offset = self.verticalScrollBar().value()
-            for y in range(-offset % spacing, self.viewport().height(), spacing):
-                if self.template in ('lines', 'grid'):
-                    painter.drawLine(0, y, self.viewport().width(), y)
-                elif self.template in ('dots', 'diamonds'):
-                    painter.setBrush(color)
-                    for x in range(14, self.viewport().width(), spacing):
-                        if self.template == 'dots':
-                            painter.drawEllipse(QRectF(x, y, 1.5, 1.5))
-                        else:
-                            from PySide6.QtGui import QPolygonF
-                            from PySide6.QtCore import QPointF
-                            painter.drawPolygon(QPolygonF([QPointF(x, y - 1.4), QPointF(x + 1.4, y), QPointF(x, y + 1.4), QPointF(x - 1.4, y)]))
-            if self.template == 'grid':
-                for x in range(14, self.viewport().width(), spacing):
-                    painter.drawLine(x, 0, x, self.viewport().height())
-            elif self.template == 'paper':
-                # Deterministic offline grain, anchored to document coordinates.
-                for y in range(-offset % 5, self.viewport().height(), 5):
-                    for x in range((y + offset) * 7 % 13, self.viewport().width(), 13):
-                        painter.drawPoint(x, y)
+            tile = self._pattern_tile(
+                self.template,
+                spacing,
+                self.pattern_strength,
+                self.palette().text().color().rgba(),
+                self.devicePixelRatioF(),
+            )
+            mod = 65 if self.template == 'paper' else spacing
+            painter.drawTiledPixmap(self.viewport().rect(), tile, QPoint(0, offset % mod))
             painter.end()
         super().paintEvent(event)
         self._paint_checklists()
@@ -766,6 +799,35 @@ class RichNoteEditor(QTextEdit):
                 self.move_checklist_item(cursor.block().position(), other.position())
                 self.setTextCursor(QTextCursor(other))
             return
+        if event.key() == Qt.Key.Key_Space and not event.modifiers() and not self._is_check(cursor.block()):
+            prefix = cursor.block().text()[:cursor.positionInBlock()]
+            if prefix in ('#', '##', '###', '-', '*', '1.', '[]', '[ ]'):
+                cursor.beginEditBlock()
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock, QTextCursor.MoveMode.KeepAnchor)
+                cursor.removeSelectedText()
+                if prefix in ('#', '##', '###'):
+                    level = len(prefix)
+                    bf = cursor.blockFormat()
+                    bf.setHeadingLevel(level)
+                    cursor.setBlockFormat(bf)
+                    cf = QTextCharFormat()
+                    cf.setFontWeight(QFont.Weight.DemiBold)
+                    cf.setFontPointSize({1: 18, 2: 15, 3: 13.5}[level])
+                    cursor.setCharFormat(cf)
+                    self.setTextCursor(cursor)
+                    cursor.endEditBlock()
+                    return
+                if prefix in ('-', '*', '1.'):
+                    lf = QTextListFormat()
+                    lf.setStyle(QTextListFormat.Style.ListDecimal if prefix == '1.' else QTextListFormat.Style.ListDisc)
+                    cursor.createList(lf)
+                    self.setTextCursor(cursor)
+                    cursor.endEditBlock()
+                    return
+                if prefix in ('[]', '[ ]'):
+                    cursor.endEditBlock()
+                    self.add_checklist()
+                    return
         for sequence, mark in (('Ctrl+B', 'bold'), ('Ctrl+I', 'italic'), ('Ctrl+U', 'underline')):
             if QKeySequence(event.keyCombination()) == QKeySequence(sequence):
                 self.toggle_mark(mark)
@@ -780,7 +842,7 @@ class RichNoteEditor(QTextEdit):
         text = before[start + 2:] if start >= 0 else ''
         if start >= 0 and ']' not in text and '\n' not in text and len(text) <= 80:
             self._start = start + 2
-            items = [r for r in self.store.records(state='all') if r['kind'] != 'session']
+            items = self.store.link_candidates(text)
             self.candidates = {f'{r["title"]} · {r["kind"]} · {r["id"][:6]}': r for r in items}
             self.model.setStringList(sorted(self.candidates))
             self.completer.setCompletionPrefix(text)

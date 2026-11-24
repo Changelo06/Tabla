@@ -16,21 +16,43 @@ from .attachment_widgets import AttachmentPanel
 from .attachments import short_name
 
 
+def _floating_shadow(widget, dark):
+    width, height, dpr = widget.width(), widget.height(), round(widget.devicePixelRatioF(), 2)
+    key = (width, height, dpr, dark)
+    if getattr(widget, '_shadow_key', None) == key:
+        return widget._shadow_cache
+    px_w, px_h = max(1, round(width * dpr)), max(1, round(height * dpr))
+    pm = QPixmap(px_w, px_h)
+    pm.setDevicePixelRatio(dpr)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    rect = QRect(0, 0, width, height).adjusted(12, 12, -12, -12)
+    p.setPen(Qt.PenStyle.NoPen)
+    for spread in range(11, 0, -1):
+        alpha = (4 if spread > 5 else 7) if dark else (2 if spread > 5 else 4)
+        p.setBrush(QColor(0, 0, 0, alpha))
+        p.drawRoundedRect(rect.adjusted(-spread, -spread + 3, spread, spread + 3), 14 + spread, 14 + spread)
+    p.end()
+    widget._shadow_key = key
+    widget._shadow_cache = pm
+    return pm
+
+
 class FloatingSurface(PolishedDialog):
     def surface_background(self):
         return themed_color('#ffffff')
 
     def paintEvent(self, event):
+        from .tokens import current_tokens
+        t = current_tokens()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.drawPixmap(0, 0, _floating_shadow(self, t.dark))
         rect = self.rect().adjusted(12, 12, -12, -12)
-        for spread in range(11, 0, -1):
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(0, 0, 0, 2 if spread > 5 else 4))
-            painter.drawRoundedRect(rect.adjusted(-spread, -spread + 3, spread, spread + 3), 12 + spread, 12 + spread)
-        painter.setPen(QPen(QColor(themed_color('#dadce0')), .7))
+        painter.setPen(QPen(QColor(t.border_strong), 0.8))
         painter.setBrush(QColor(self.surface_background()))
-        painter.drawRoundedRect(rect, 12, 12)
+        painter.drawRoundedRect(rect, 14, 14)
 
 
 class NoteDialog(LegacyNoteDialog):
@@ -103,7 +125,7 @@ class NoteDialog(LegacyNoteDialog):
         self.context_toggle.setAccessibleName('Links and sources')
         self.context_toggle.setCheckable(True)
         for text, glyph, tip, callback in (
-            ('A', None, 'Formatting', self.format_menu),
+            ('', 'format', 'Formatting', self.format_menu),
             ('', 'palette', 'Background and color', self.background_menu),
             ('', 'attachment', 'Insert', self.insert_menu),
             ('', 'image', 'Insert image', self.choose_image),
@@ -359,6 +381,23 @@ class NoteDialog(LegacyNoteDialog):
             self._backdrop.set_strength(1)
         if self._shown:
             self.layout_context()
+            if self.sidecar.isVisible() and motion_enabled():
+                self._animate_sidecar_entry()
+
+    def _animate_sidecar_entry(self):
+        from .spring import SpringAnimation, SECONDARY_LAG
+        target_pos = QPoint(self.sidecar.pos())
+        start_x = target_pos.x() - 10
+        self.sidecar.move(start_x, target_pos.y())
+        self.sidecar.setWindowOpacity(0.0)
+        anim = SpringAnimation(SECONDARY_LAG, 210, self.sidecar)
+        def step(v):
+            p = float(v)
+            self.sidecar.move(round(start_x + 10.0 * p), target_pos.y())
+            self.sidecar.setWindowOpacity(max(0.0, min(1.0, p)))
+        anim.valueChanged.connect(step)
+        self.sidecar._lag_anim = anim
+        QTimer.singleShot(55, anim.start)
 
     def done(self, result):
         if self._closing_pending:

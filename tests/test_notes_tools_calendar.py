@@ -109,5 +109,7 @@ class NotesToolsCalendarTests(unittest.TestCase):
         chrome = self.window.chrome
         self.assertLess(chrome.minimize.x(), chrome.maximize.x())
         self.assertLess(chrome.maximize.x(), chrome.close_button.x())
-        self.assertEqual(chrome.minimize.color, '#febc2e')
-        self.assertEqual(chrome.maximize.color, '#28c840')
+        self.assertEqual(chrome.minimize.action, 'minimize')
+        self.assertEqual(chrome.maximize.action, 'maximize')
+        self.assertEqual(chrome.close_button.action, 'close')
+        self.assertEqual(chrome.minimize.objectName(), 'windowControl')

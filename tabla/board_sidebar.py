@@ -12,12 +12,12 @@ class BoardSidebar(QWidget):
         self.setObjectName('boardSidebar')
         self.setFixedWidth(236)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 22, 12, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(14, 20, 12, 16)
+        layout.setSpacing(10)
         collapse = button('Hide', owner.toggle_boards_sidebar, 'text')
-        collapse.setMinimumSize(64, 36)
-        collapse.setStyleSheet('QPushButton {min-width:64px;min-height:36px;padding:4px 8px;text-align:center;border-radius:6px;} QPushButton:hover {background:#eeeeec;}')
-        collapse.setToolTip('Hide')
+        collapse.setMinimumSize(58, 32)
+        collapse.setStyleSheet('QPushButton {min-width:58px;min-height:32px;padding:4px 8px;text-align:center;border-radius:8px;}')
+        collapse.setToolTip('Hide boards sidebar')
         collapse.setAccessibleName('Hide boards sidebar')
         layout.addLayout(row(label('Boards', 'section'), None, collapse))
         layout.addWidget(button('New board', owner.new_board, 'text', 'plus'))
@@ -30,7 +30,6 @@ class BoardSidebar(QWidget):
         self.tree.setIndentation(14)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.tree.setAccessibleName('Boards grouped by project')
-        self.tree.setStyleSheet('QTreeWidget {border:none;background:transparent;} QTreeWidget::item {padding:8px 3px;border-radius:6px;} QTreeWidget::item:selected {background:#e8f0fe;color:#202124;}')
         layout.addWidget(self.tree, 1)
         layout.addWidget(button('Archived boards', owner.archived_boards, 'text', 'archive'))
         self.tree.currentItemChanged.connect(self.choose)
@@ -40,11 +39,19 @@ class BoardSidebar(QWidget):
         self.signature = None
 
     def refresh(self):
-        from PySide6.QtWidgets import QApplication
-        dark = bool(QApplication.instance().property('tablaDark'))
-        background, text = ('#35383c', '#f5f5f5') if dark else ('#e8f0fe', '#202124')
-        self.tree.setProperty('tablaOriginalStyle', None)
-        self.tree.setStyleSheet('QTreeWidget {border:none;background:transparent;} QTreeWidget::item {padding:8px 3px;border-radius:6px;} QTreeWidget::item:selected {background:' + background + ';color:' + text + ';} QTreeWidget::branch:selected {background:' + background + ';}')
+        from .tokens import current_tokens
+        t = current_tokens()
+        self.setProperty('tablaThemed', True)
+        self.setStyleSheet(f'QWidget#boardSidebar {{background:{t.bg_surface};border-right:1px solid {t.border_subtle};}}')
+        self.tree.setProperty('tablaThemed', True)
+        self.tree.setStyleSheet(
+            f'QTreeWidget {{border:none;background:transparent;outline:0;show-decoration-selected:0;}}'
+            f'QTreeWidget::item {{padding:7px 8px;border-radius:8px;color:{t.ink_secondary};}}'
+            f'QTreeWidget::item:hover {{background:{t.bg_surface_hover};color:{t.ink_primary};}}'
+            f'QTreeWidget::item:selected {{background:{t.bg_surface_active};color:{t.ink_primary};font-weight:600;}}'
+            f'QTreeWidget::branch {{background:transparent;}}'
+            f'QTreeWidget::branch:selected {{background:transparent;}}'
+        )
         boards = self.owner.board_catalog.boards()
         signature = [(b['id'], b['title'], b.get('project'),
                       (self.owner.store.get(b.get('project')) or {}).get('title')) for b in boards]

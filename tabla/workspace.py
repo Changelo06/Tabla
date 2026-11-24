@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QWidget, QFrame, QVBoxLayout, QHBoxLayout, QGridL
     QTableWidgetItem, QHeaderView, QAbstractItemView, QMessageBox, QPushButton, QInputDialog, QFileDialog, QProgressBar)
 from PySide6.QtWidgets import QSizePolicy
 from .window import MainWindow
-from .widgets import label, button, row, panel, scroll, clear, ClickCard, NoteCard, PinButton
+from .widgets import label, button, row, panel, scroll, clear, ClickCard, NoteCard, PinButton, StripeDivider, SegmentedSwitch, ThemePresetCard, CountdownDisplay
 from .surfaces import CalendarCell, RecordButton, Timeline, Masonry, QuickCapture, BoardColumn
 from .theme import icon, navigation_icon, COLORS, apply_appearance, polish_surfaces
 from .storage import LINK_RE
@@ -28,7 +28,7 @@ from .task_board import TaskBoard
 
 
 class TablaWindow(MainWindow):
-    def __init__(self, store):
+    def __init__(self, store, defer_render=False):
         self.board_catalog = BoardCatalog(store)
         self.board_catalog.migrate()
         available_boards = self.board_catalog.boards()
@@ -37,11 +37,13 @@ class TablaWindow(MainWindow):
         self.boards_sidebar = None
         self._boards_hidden = store.setting('boards_sidebar_hidden', False)
         from PySide6.QtWidgets import QApplication
-        apply_appearance(QApplication.instance(), store.setting('appearance', 'light') == 'dark')
+        apply_appearance(QApplication.instance(), store.setting('appearance', 'light'))
         self.collapsed = store.setting('sidebar_hidden', False)
         self._history, self._history_index, self._history_locked = [], -1, False
         install_polish(QApplication.instance())
         set_reduced_motion(store.setting('reduce_motion', False))
+        from . import foley
+        foley.set_enabled(store.setting('tactile_sound', False))
         self.task_view = store.setting('tasks_presentation', 'Board')
         self.note_view = 'Grid'
         self.task_query = ''
@@ -50,7 +52,8 @@ class TablaWindow(MainWindow):
         self.capture = None
         self._capture_to_restore = None
         self._board_scroll = {}
-        super().__init__(store)
+        self._sidebar_key = None
+        super().__init__(store, defer_render=True)
         if self.task_view == 'Board':
             self.task_filter = 'All'
         self.root.layout().setContentsMargins(0, 0, 0, 0)
@@ -66,13 +69,26 @@ class TablaWindow(MainWindow):
         from .board_sidebar import BoardSidebar
         self.boards_sidebar = BoardSidebar(self)
         self.root.layout().insertWidget(1, self.boards_sidebar)
-        self.setMenuWidget(self.chrome)
-        self.window_edges = WindowEdges(self)
+        header_host = QWidget(self)
+        header_layout = QVBoxLayout(header_host)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(0)
+        header_layout.addWidget(self.chrome)
+        self.stripe_divider = StripeDivider(header_host, height=4)
+        header_layout.addWidget(self.stripe_divider)
+        self.setMenuWidget(header_host)
+        from .windows_frame import available as _win_native_frame
+        self.window_edges = None if _win_native_frame() else WindowEdges(self)
         self.resize_debounce.timeout.disconnect()
         self.resize_debounce.timeout.connect(self.reflow)
-        self.render_sidebar()
-        self.render()
-        self.remember_location()
+        self._clock_timer = QTimer(self)
+        self._clock_timer.setInterval(30000)
+        self._clock_timer.timeout.connect(self._update_calendar_clock)
+        self._clock_timer.start()
+        if not defer_render:
+            self.render_sidebar()
+            self.render()
+            self.remember_location()
         QShortcut(QKeySequence('Alt+Left'), self, activated=lambda: self.history_step(-1))
         QShortcut(QKeySequence('Alt+Right'), self, activated=lambda: self.history_step(1))
 
@@ -166,7 +182,7 @@ class TablaWindow(MainWindow):
         if control is not None:
             try:
                 control.setChecked(visible)
-                control.setText(('Hide' if visible else 'Show') if wide else 'Boards')
+                control.setText('Boards')
                 text = ('Hide boards sidebar' if visible else 'Show boards sidebar') if wide else 'Choose a board'
                 control.setToolTip(text)
                 control.setAccessibleName(text)
@@ -374,6 +390,17 @@ class TablaWindow(MainWindow):
             self.chrome.reduce_motion.setChecked(checked)
             self.chrome.reduce_motion.blockSignals(False)
 
+    def set_tactile_sound(self, checked):
+        from . import foley
+        self.store.set_setting('tactile_sound', bool(checked))
+        foley.set_enabled(bool(checked))
+        if checked:
+            foley.play('pluck')
+        if hasattr(self, 'chrome') and hasattr(self.chrome, 'tactile_sound'):
+            self.chrome.tactile_sound.blockSignals(True)
+            self.chrome.tactile_sound.setChecked(bool(checked))
+            self.chrome.tactile_sound.blockSignals(False)
+
     def show_help(self):
         self.help_dialog('Quick guide', 'Capture notes\nUse Take a note to write quickly. Pin, label or color it from the composer.\n\nConnect ideas\nType [[ for a reference. Ctrl-click to follow it.\n\nPlan work\nEdit task properties inline. Drag calendar entries to reschedule.\n\nAttachments\nUse the paperclip, drop files into a note, or File → Import files. Files are copied into your local workspace. Use More → Filename-only attachments for compact cards.\n\nRecovery\nOpen Trash in the icon sidebar to restore deleted items.\n\nMotion\nUse Settings → Reduce motion to turn off animations.')
 
@@ -430,15 +457,48 @@ class TablaWindow(MainWindow):
             self.capture.setFixedWidth(min(650, max(200, available)))
             self.capture.queue_text_resize()
 
+    def _sync_sidebar_states(self, dark):
+        for name, btn in getattr(self, 'nav_buttons', {}).items():
+            active = self.page == name and (not self.project_id or name == 'My Tasks')
+            btn.setProperty('active', active)
+            if name != 'Trash':
+                glyph = {'Today': 'home', 'Calendar': 'calendar', 'My Tasks': 'board', 'Notes': 'note', 'Focus': 'clock'}[name]
+                btn.setIcon(navigation_icon(glyph, active, dark))
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        if getattr(self, '_projects_btn', None) is not None:
+            active = bool(self.project_id) and self.page != 'My Tasks'
+            self._projects_btn.setProperty('active', active)
+            self._projects_btn.setIcon(navigation_icon('folder', active, dark))
+            self._projects_btn.style().unpolish(self._projects_btn)
+            self._projects_btn.style().polish(self._projects_btn)
+        if getattr(self, '_settings_btn', None) is not None:
+            active = self.page == 'Settings'
+            self._settings_btn.setProperty('active', active)
+            self._settings_btn.setIcon(navigation_icon('settings', active, dark))
+            self._settings_btn.style().unpolish(self._settings_btn)
+            self._settings_btn.style().polish(self._settings_btn)
+        self.sidebar.setVisible(not self.collapsed)
+        self.update_mini_timer()
+
     def render_sidebar(self):
+        from PySide6.QtWidgets import QApplication
+        from .tokens import current_tokens
         short = self.height() < 560
+        t = current_tokens()
+        dark = t.dark
+        key = (short, t.key)
+        if getattr(self, '_sidebar_key', None) == key and getattr(self, 'nav_buttons', None):
+            self._sync_sidebar_states(dark)
+            return
+        self._sidebar_key = key
         clear(self.sidebar_layout)
         self.sidebar.setFixedWidth(64)
         self.sidebar.setVisible(not self.collapsed)
         self.sidebar_layout.setContentsMargins(10, 6 if short else 15, 10, 6 if short else 14)
         self.sidebar_layout.setSpacing(2 if short else 5)
         mark = QLabel()
-        mark.setPixmap(icon('brand', '#37352f', 24).pixmap(24, 24))
+        mark.setPixmap(icon('brand', t.ink_primary, 24, preserve_color=True).pixmap(24, 24))
         mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
         mark.setFixedHeight(34)
         mark.setVisible(not short)
@@ -454,34 +514,37 @@ class TablaWindow(MainWindow):
                 self.sidebar_layout.addSpacing(5 if short else 9)
                 divider = QFrame()
                 divider.setObjectName('trashDivider')
+                divider.setProperty('tablaThemed', True)
                 divider.setFixedSize(28, 1)
-                divider.setStyleSheet('background:#deded9;')
+                divider.setStyleSheet(f'background:{t.border_subtle};')
                 self.sidebar_layout.addWidget(divider, 0, Qt.AlignmentFlag.AlignHCenter)
                 self.sidebar_layout.addSpacing(5 if short else 9)
             active = self.page == name and (not self.project_id or name == 'My Tasks')
             btn = self.rail_button(title, glyph, lambda checked=False, p=name: self.navigate(p), active)
             if name == 'Trash':
-                from PySide6.QtWidgets import QApplication
-                dark = bool(QApplication.instance().property('tablaDark'))
-                red, tint = ('#dd9696', '#442f32') if dark else ('#a95757', '#f6eaea')
+                red, tint = (t.danger, t.danger_soft)
+                btn.setProperty('tablaThemed', True)
                 btn.setIcon(icon('trash', red, 21, preserve_color=True))
-                btn.setStyleSheet(f'QPushButton#nav {{padding:6px;text-align:center;border-radius:9px;color:{red};}}'
+                btn.setStyleSheet(f'QPushButton#nav {{padding:6px;text-align:center;border-radius:10px;color:{red};}}'
                     f'QPushButton#nav:hover, QPushButton#nav[active="true"] {{background:{tint};}}')
             self.sidebar_layout.addWidget(btn)
             self.nav_buttons[name] = btn
         self.sidebar_layout.addSpacing(5 if short else 9)
         divider = QFrame()
         divider.setObjectName('projectsDivider')
+        divider.setProperty('tablaThemed', True)
         divider.setFixedSize(28, 1)
-        divider.setStyleSheet('background:#deded9;')
+        divider.setStyleSheet(f'background:{t.border_subtle};')
         self.sidebar_layout.addWidget(divider, 0, Qt.AlignmentFlag.AlignHCenter)
         self.sidebar_layout.addSpacing(5 if short else 9)
-        self.sidebar_layout.addWidget(self.rail_button('Projects', 'folder', self.show_projects, bool(self.project_id) and self.page != 'My Tasks'))
+        self._projects_btn = self.rail_button('Projects', 'folder', self.show_projects, bool(self.project_id) and self.page != 'My Tasks')
+        self.sidebar_layout.addWidget(self._projects_btn)
         self.sidebar_layout.addStretch()
         self.mini_timer = self.rail_button('Running focus timer', 'clock', lambda: self.navigate('Focus'))
         self.sidebar_layout.addWidget(self.mini_timer)
         self.update_mini_timer()
-        self.sidebar_layout.addWidget(self.rail_button('Settings and backups', 'settings', lambda: self.navigate('Settings'), self.page == 'Settings'))
+        self._settings_btn = self.rail_button('Settings and backups', 'settings', lambda: self.navigate('Settings'), self.page == 'Settings')
+        self.sidebar_layout.addWidget(self._settings_btn)
         polish_surfaces(self.sidebar)
 
     def rail_button(self, title, glyph, callback, active=False):
@@ -572,7 +635,14 @@ class TablaWindow(MainWindow):
         heading.setMinimumWidth(0)
         if short:
             heading.setStyleSheet('font-size:23px;font-weight:600;')
-        head = row(heading, None)
+        if self.page == 'My Tasks':
+            board_opts = button('•••', lambda: self.board_menu(self.board_id), 'text')
+            board_opts.setAccessibleName('Board options')
+            board_opts.setToolTip('Board options (rename, move, archive)')
+            board_opts.setFixedHeight(30)
+            head = row(heading, board_opts, None, spacing=6)
+        else:
+            head = row(heading, None)
         head.setStretch(0, 1)
         actions = head if self.width() >= 900 or short else row(None)
         actions.addWidget(quick_note)
@@ -676,21 +746,56 @@ class TablaWindow(MainWindow):
             super().set_notes_filter(state)
 
     def render_settings(self):
-        appearance = QComboBox()
-        appearance.addItems(['Light', 'Dark'])
-        appearance.setCurrentText(self.store.setting('appearance', 'light').capitalize())
-        appearance.currentTextChanged.connect(self.set_appearance)
-        self.content.addLayout(row(label('Appearance', 'section'), appearance, None))
+        from .tokens import THEME_PRESETS, resolve_theme
+        super().render_settings()
+        scroll_item = self.content.itemAt(self.content.count() - 1)
+        scroll_widget = scroll_item.widget() if scroll_item else None
+        host_layout = scroll_widget.widget().layout() if scroll_widget and hasattr(scroll_widget, 'widget') and scroll_widget.widget() else self.content
+
+        active_key = resolve_theme(self.store.setting('appearance', 'light')).key
+        appearance_card, av = panel('smallCard', 20)
+        av.setSpacing(12)
+        av.addWidget(label('Appearance', 'section'))
+        av.addWidget(label('Choose an overall workspace theme preset. All surfaces, notes, and window chrome adapt immediately.', 'muted', True))
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 2, 0, 2)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
+        columns = 4 if self.width() >= 960 else (3 if self.width() >= 720 else 2)
+        for index, preset in enumerate(THEME_PRESETS):
+            card_btn = ThemePresetCard(preset, active=(preset.key == active_key), callback=self.set_appearance)
+            grid.addWidget(card_btn, index // columns, index % columns)
+        for c in range(columns):
+            grid.setColumnStretch(c, 1)
+        av.addLayout(grid)
+
+        behavior_card, bv = panel('smallCard', 20)
+        bv.setSpacing(10)
+        bv.addWidget(label('Motion & feedback', 'section'))
         reduce = QCheckBox('Reduce motion')
         reduce.setChecked(bool(self.store.setting('reduce_motion', False)))
         reduce.toggled.connect(self.set_reduce_motion)
-        self.content.addWidget(reduce)
-        super().render_settings()
+        bv.addWidget(reduce)
+        tactile = QCheckBox('Tactile micro-sounds (subtle cues on pin, drop, completion)')
+        tactile.setChecked(bool(self.store.setting('tactile_sound', False)))
+        tactile.toggled.connect(self.set_tactile_sound)
+        bv.addWidget(tactile)
+
+        host_layout.insertWidget(0, appearance_card)
+        host_layout.insertWidget(1, behavior_card)
 
     def set_appearance(self, value):
         from PySide6.QtWidgets import QApplication
-        self.store.set_setting('appearance', value.lower())
-        apply_appearance(QApplication.instance(), value == 'Dark')
+        from .tokens import resolve_theme
+        from .windows_frame import apply_dwm
+        preset = resolve_theme(value)
+        self.store.set_setting('appearance', preset.key)
+        apply_appearance(QApplication.instance(), preset.key)
+        apply_dwm(self, preset.dark)
+        if hasattr(self, 'stripe_divider'):
+            self.stripe_divider.update()
+        if getattr(self, 'boards_sidebar', None):
+            self.boards_sidebar.refresh()
         self.render_sidebar()
         self.render(preserve_capture=True)
 
@@ -703,6 +808,8 @@ class TablaWindow(MainWindow):
             self._closed = True
             self.resize_debounce.stop()
             self.pulse.stop()
+            if hasattr(self, '_clock_timer'):
+                self._clock_timer.stop()
 
     def render_context(self):
         if hasattr(self, 'context'):
@@ -717,6 +824,13 @@ class TablaWindow(MainWindow):
         self.mini_timer.setText('')
         self.mini_timer.setToolTip(f'{remaining // 60:02}:{remaining % 60:02} · {self.timer.data["mode"]} running')
 
+    def _update_calendar_clock(self):
+        if hasattr(self, 'timeline') and self.page == 'Calendar':
+            try:
+                self.timeline.update()
+            except RuntimeError:
+                pass
+
     def tick(self):
         super().tick()
         self.update_mini_timer()
@@ -728,52 +842,73 @@ class TablaWindow(MainWindow):
                 self.focus_progress.setValue(round((1 - remaining / max(1, self.timer.data['duration'])) * 1000))
             except RuntimeError:
                 pass
-        if hasattr(self, 'timeline') and self.page == 'Calendar':
-            try:
-                self.timeline.update()
-            except RuntimeError:
-                pass
 
     def render_calendar(self):
-        toolbar = row()
+        from .tokens import current_tokens
+        t = current_tokens()
+        toolbar = row(spacing=10)
         title = self.month.strftime('%B %Y') if self.calendar_view == 'Month' else self.selected_day.strftime('%B %d, %Y')
         compact = self.width() < 900
+        def _stepper():
+            box = QFrame()
+            box.setObjectName('segmentedTrack')
+            lay = QHBoxLayout(box)
+            lay.setContentsMargins(3, 3, 3, 3)
+            lay.setSpacing(2)
+            p_btn = button('', lambda: self.move_calendar(-1), 'tab', 'left')
+            p_btn.setFixedWidth(28)
+            p_btn.setToolTip('Previous')
+            t_btn = button('Today', self.go_today, 'tab')
+            n_btn = button('', lambda: self.move_calendar(1), 'tab', 'right')
+            n_btn.setFixedWidth(28)
+            n_btn.setToolTip('Next')
+            lay.addWidget(p_btn)
+            lay.addWidget(t_btn)
+            lay.addWidget(n_btn)
+            return box
         if compact:
-            self.content.addLayout(row(label(title, 'section'), None,
-                button('', lambda: self.move_calendar(-1), 'text', 'left'), button('Today', self.go_today, 'text'),
-                button('', lambda: self.move_calendar(1), 'text', 'right')))
+            self.content.addLayout(row(label(title, 'section'), None, _stepper()))
         else:
             toolbar.addWidget(label(title, 'section'))
         toolbar.addStretch()
-        for title, mode in (('Month', 'Month'), ('Week', 'Week'), ('Day', 'Day')):
-            btn = button(title, lambda checked=False, m=mode: self.calendar_mode(m), 'tab', 'calendar' if mode == 'Month' else None)
-            btn.setProperty('active', self.calendar_view == mode)
-            toolbar.addWidget(btn)
+        toolbar.addWidget(SegmentedSwitch(
+            [('Month', 'Month', None), ('Week', 'Week', None), ('Day', 'Day', None)],
+            self.calendar_view,
+            self.calendar_mode,
+        ))
         if not compact:
-            toolbar.addSpacing(12)
-            toolbar.addWidget(button('', lambda: self.move_calendar(-1), 'text', 'left'))
-            toolbar.addWidget(button('Today', self.go_today, 'text'))
-            toolbar.addWidget(button('', lambda: self.move_calendar(1), 'text', 'right'))
-            toolbar.addSpacing(12)
+            toolbar.addWidget(_stepper())
         toolbar.addWidget(button('New' if compact else 'New event', self.new_event, 'primary', 'plus'))
         self.content.addLayout(toolbar)
         if self.calendar_view != 'Month':
             self.render_timeline()
             return
+        frame = QFrame()
+        frame.setObjectName('calendarFrame')
+        frame.setProperty('tablaThemed', True)
+        frame.setStyleSheet(f'QFrame#calendarFrame {{background:{t.bg_canvas};border:1px solid {t.border_subtle};border-radius:14px;}}')
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(0, 0, 0, 0)
+        frame_layout.setSpacing(0)
+        weekday_bar = QFrame()
+        weekday_bar.setProperty('tablaThemed', True)
+        weekday_bar.setStyleSheet(f'background:{t.bg_surface};border:none;border-bottom:1px solid {t.border_subtle};border-top-left-radius:13px;border-top-right-radius:13px;')
+        weekdays = QHBoxLayout(weekday_bar)
+        weekdays.setContentsMargins(0, 0, 8, 0)
+        weekdays.setSpacing(0)
         host = QWidget()
         grid = QGridLayout(host)
-        grid.setContentsMargins(0, 0, 1, 1)
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(0)
-        weekdays = QHBoxLayout()
-        weekdays.setContentsMargins(0, 0, 10, 0)
-        weekdays.setSpacing(0)
-        for column, weekday in enumerate(('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')):
-            title = label(weekday, 'muted')
-            title.setObjectName('weekdayHeader')
-            title.setContentsMargins(8, 2, 0, 10)
-            weekdays.addWidget(title, 1)
+        for column, weekday in enumerate(('SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT')):
+            wtitle = label(weekday, 'muted')
+            wtitle.setObjectName('weekdayHeader')
+            wtitle.setProperty('tablaThemed', True)
+            wtitle.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            wtitle.setStyleSheet(f'font-size:11px;font-weight:600;color:{t.ink_muted};padding:9px 10px;')
+            weekdays.addWidget(wtitle, 1)
             grid.setColumnStretch(column, 1)
-        self.content.addLayout(weekdays)
+        frame_layout.addWidget(weekday_bar)
         weeks = calendar.Calendar(firstweekday=6).monthdatescalendar(self.month.year, self.month.month)
         annotations = {r.get('date'): r for r in self.scoped('note') if r.get('day_annotation')}
         for rindex, week in enumerate(weeks):
@@ -796,7 +931,8 @@ class TablaWindow(MainWindow):
                     cell.v.addWidget(RecordButton(record, lambda rid=record['id']: self.open_record(rid), tag))
                 if len(items) > limit:
                     more = button(f'+{len(items) - limit} more', lambda checked=False, d=day: self.day_dialog(d), 'text')
-                    more.setStyleSheet('QPushButton {font-size:10px;color:#696864;padding:0 2px;min-height:16px;max-height:16px;}')
+                    more.setProperty('tablaThemed', True)
+                    more.setStyleSheet(f'QPushButton {{font-size:11px;color:{t.ink_muted};padding:1px 4px;min-height:18px;max-height:18px;}}')
                     more.setToolTip('Show all entries for this day')
                     cell.v.addWidget(more)
                 if annotation.get('body'):
@@ -805,37 +941,54 @@ class TablaWindow(MainWindow):
                 grid.addWidget(cell, rindex, column)
         self.calendar_scroll = scroll(host)
         self.calendar_scroll.setObjectName('monthCalendarScroll')
-        self.content.addWidget(self.calendar_scroll, 1)
-        self.content.addWidget(label('Drag entries to move them · Right-click a day to highlight it or write a day note', 'muted', True))
+        frame_layout.addWidget(self.calendar_scroll, 1)
+        self.content.addWidget(frame, 1)
 
     def render_timeline(self):
+        from .tokens import current_tokens
+        t = current_tokens()
         start = self.selected_day - timedelta(days=self.selected_day.weekday())
         days = [self.selected_day] if self.calendar_view == 'Day' else [start + timedelta(days=i) for i in range(7)]
-        header = QHBoxLayout()
-        header.setContentsMargins(58, 0, 0, 0)
+        frame = QFrame()
+        frame.setObjectName('calendarFrame')
+        frame.setProperty('tablaThemed', True)
+        frame.setStyleSheet(f'QFrame#calendarFrame {{background:{t.bg_canvas};border:1px solid {t.border_subtle};border-radius:14px;}}')
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(0, 0, 0, 0)
+        frame_layout.setSpacing(0)
+        header_bar = QFrame()
+        header_bar.setProperty('tablaThemed', True)
+        header_bar.setStyleSheet(f'background:{t.bg_surface};border:none;border-bottom:1px solid {t.border_subtle};border-top-left-radius:13px;border-top-right-radius:13px;')
+        header = QHBoxLayout(header_bar)
+        header.setContentsMargins(62, 8, 8, 8)
+        header.setSpacing(4)
         all_records = [r for kind in ('task', 'event', 'block') for r in self.scoped(kind)]
         for day in days:
             column = QWidget()
             v = QVBoxLayout(column)
             v.setContentsMargins(4, 0, 4, 0)
-            v.setSpacing(4)
-            title = button(day.strftime('%a %d'), lambda checked=False, d=day: self.day_dialog(d), 'text')
-            if day == date.today():
-                title.setStyleSheet('color:#2383e2;border:none;background:transparent;font-weight:600;')
-            v.addWidget(title)
+            v.setSpacing(5)
+            is_today = day == date.today()
+            title = button(day.strftime('%a  %d'), lambda checked=False, d=day: self.day_dialog(d), 'text')
+            title.setProperty('tablaThemed', True)
+            if is_today:
+                title.setStyleSheet(f'QPushButton {{background:{t.bg_pill};color:{t.ink_inverse};border:none;border-radius:8px;padding:4px 9px;font-weight:600;}}')
+            else:
+                title.setStyleSheet(f'QPushButton {{background:transparent;color:{t.ink_secondary};border:none;border-radius:8px;padding:4px 6px;font-weight:500;}} QPushButton:hover {{background:{t.bg_surface_hover};color:{t.ink_primary};}}')
+            v.addLayout(row(title, None))
             for record in [r for r in all_records if r.get('date') == day.isoformat() and not r.get('time')][:3]:
                 v.addWidget(RecordButton(record, lambda rid=record['id']: self.open_record(rid)))
             v.addStretch()
             header.addWidget(column, 1)
-        self.content.addLayout(header)
+        frame_layout.addWidget(header_bar)
         self.timeline = Timeline(days, all_records)
         self.timeline.opened.connect(self.open_record)
         self.timeline.rescheduled.connect(self.reschedule)
         self.timeline.create_at.connect(self.create_timed_event)
         area = scroll(self.timeline)
-        self.content.addWidget(area, 1)
+        frame_layout.addWidget(area, 1)
+        self.content.addWidget(frame, 1)
         QTimer.singleShot(0, area, lambda: area.verticalScrollBar().setValue(8 * Timeline.hour_height))
-        self.content.addWidget(label('Double-click a time to add an event · Drag to move · Drag the bottom edge to change duration', 'muted'))
 
     def move_record_date(self, record_id, day):
         record = self.store.get(record_id)
@@ -923,19 +1076,16 @@ class TablaWindow(MainWindow):
         dialog.deleteLater()
 
     def render_tasks(self):
-        tools = row()
-        self.boards_toggle = button('Boards', self.boards_navigation, 'text', 'sidebar')
+        tools = row(spacing=10)
+        self.boards_toggle = button('Boards', self.boards_navigation, 'tab', 'sidebar')
         self.boards_toggle.setCheckable(True)
         tools.addWidget(self.boards_toggle)
         self.sync_boards_sidebar()
-        options = button('•••', lambda: self.board_menu(self.board_id), 'text')
-        options.setAccessibleName('Board options')
-        options.setToolTip('Board options')
-        tools.addWidget(options)
-        for name in ('Board', 'Table'):
-            btn = button('Cards' if name == 'Board' else name, lambda checked=False, n=name: self.set_task_layout(n), 'tab', 'tasks' if name == 'Table' else 'board')
-            btn.setProperty('active', self.task_view == name)
-            tools.addWidget(btn)
+        tools.addWidget(SegmentedSwitch(
+            [('Board', 'Cards', 'board'), ('Table', 'Table', 'tasks')],
+            self.task_view,
+            self.set_task_layout,
+        ))
         tools.addStretch()
         query = QLineEdit(self.task_query)
         query.setPlaceholderText('Search cards')
@@ -1389,17 +1539,14 @@ class TablaWindow(MainWindow):
         v = QVBoxLayout(focus)
         v.setContentsMargins(16, 12, 16, 16)
         v.setSpacing(24)
-        modes = row(None)
-        for name in ('Focus', 'Short break', 'Long break'):
-            btn = button(name, lambda checked=False, mode=name: self.timer_mode(mode), 'tab')
-            btn.setProperty('active', self.timer.data['mode'] == name)
-            modes.addWidget(btn)
-        modes.addStretch()
+        modes = row(None, SegmentedSwitch(
+            [(name, name, None) for name in ('Focus', 'Short break', 'Long break')],
+            self.timer.data['mode'],
+            self.timer_mode,
+        ), None)
         v.addLayout(modes)
         remaining = int(math.ceil(self.timer.remaining()))
-        self.countdown = label(f'{remaining // 60:02}:{remaining % 60:02}')
-        self.countdown.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.countdown.setStyleSheet("font-family:'Inter';font-size:88px;font-weight:500;color:#37352f;padding:24px 0;")
+        self.countdown = CountdownDisplay(f'{remaining // 60:02}:{remaining % 60:02}', px=92)
         v.addWidget(self.countdown)
         self.focus_progress = QProgressBar()
         self.focus_progress.setRange(0, 1000)
@@ -1417,8 +1564,9 @@ class TablaWindow(MainWindow):
         self.focus_choose.setEnabled(not self.timer.data['running'])
         context_layout.addLayout(row(self.focus_choose, None))
         v.addWidget(context)
-        toggle = button('Pause' if self.timer.data['running'] else 'Start focus', self.toggle_timer, 'primary', 'play')
+        toggle = button('Pause' if self.timer.data['running'] else 'Start focus', self.toggle_timer, 'primary', 'pause' if self.timer.data['running'] else 'play')
         toggle.setProperty('timerToggle', True)
+        self._last_timer_running = bool(self.timer.data['running'])
         toggle.setMinimumWidth(130)
         v.addLayout(row(None, toggle, button('Reset', lambda: self.timer_mode(self.timer.data['mode']), 'text'), None))
         v.addLayout(row(None, button('Timer settings', self.timer_prefs, 'text', 'settings'), None))

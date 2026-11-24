@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/App-454545?style=flat" alt="App">
 </p>
 <p align="center">A little order. A lot more room.</p>
-<p align="center">A local personal workspace for Windows Â· Version 0.9.0</p>
+<p align="center">A local personal workspace for Windows · Version 1.0.0</p>
 
 ![TABLA Home with sample tasks, calendar and notes](docs/screenshots/home.png)
 
@@ -20,7 +20,8 @@ TABLA brings your tasks, calendar, notes and focus sessions into one native Wind
 - **Move work forward:** organize projects into independent boards with lists, cards, checklists, labels and attachments.
 - **Plan your time:** use month, week and day calendars for events, deadlines and work blocks.
 - **Keep your ideas:** capture formatted notes with colors, pins, checklists, images, tables and links.
-- **Make space to focus:** choose a task or note and use a configurable Pomodoro timer with breaks and local session history.
+- **Make space to focus:** choose a task or note and use a configurable Pomodoro timer with tabular display numerals, breaks and local session history.
+- **Personalize your workspace:** switch instantly between 8 built-in light and dark theme presets (`Daylight`, `Paper`, `Mist`, `Sage`, `Obsidian`, `Graphite`, `Nord`, `Espresso`) with native Windows 11 styling.
 - **Find and protect your work:** search locally, restore deleted items and export portable JSON backups.
 
 <table><tr><td><img src="docs/screenshots/boards.png" alt="Project boards with sample cards"></td><td><img src="docs/screenshots/calendar.png" alt="Weekly calendar with sample events"></td></tr><tr><td><img src="docs/screenshots/notes.png" alt="Colored sample notes and checklists"></td><td><img src="docs/screenshots/focus.png" alt="Focus timer"></td></tr></table>
@@ -29,7 +30,7 @@ All screenshots use a separate sample workspace.
 
 ## Run the Windows app
 
-1. Download `Tabla-Windows-0.9.0.zip` from [Releases](https://github.com/Changelo06/Tabla/releases). Choose the Windows package, rather than the automatic source-code archive.
+1. Download `Tabla-Windows-1.0.0.zip` from [Releases](https://github.com/Changelo06/Tabla/releases). Choose the Windows package, rather than the automatic source-code archive.
 2. Right-click the ZIP and choose **Extract All**.
 3. Move the complete `Tabla` folder to a convenient location, such as `C:\Users\YourName\Apps\Tabla`.
 4. Open **Tabla.exe**. Python is not required.
@@ -76,4 +77,4 @@ TABLA is a single-user, offline Windows app. Cloud sync, collaboration, recurrin
 
 ## License and credits
 
-TABLA's original source code is available under the [MIT License](LICENSE). Third-party components retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). TABLA uses Python, Qt for Python, SQLite and bundled Inter fonts.
+TABLA's original source code is available under the [MIT License](LICENSE). Third-party components retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). TABLA uses Python, Qt for Python, SQLite and bundled Inter and Manrope fonts.

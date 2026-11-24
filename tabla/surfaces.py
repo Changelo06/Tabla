@@ -68,28 +68,31 @@ class RecordButton(QPushButton):
         super().mousePressEvent(event)
 
     def paintEvent(self, event):
+        from .tokens import current_tokens, ui_font
+        t = current_tokens()
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
         bg, accent = COLORS.get(self.record.get('color', 'blue'), COLORS['blue'])
-        p.setPen(QColor(accent if self.underMouse() or self.hasFocus() else themed_color('#dadce0')))
+        border = accent if (self.underMouse() or self.hasFocus()) else t.border_subtle
+        p.setPen(QPen(QColor(border), 1.0))
         p.setBrush(QColor(themed_color(bg)))
-        p.drawRoundedRect(rect, 4, 4)
+        p.drawRoundedRect(rect, 7, 7)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(accent))
-        p.drawRoundedRect(QRectF(1, 4, 3, self.height() - 8), 1.5, 1.5)
+        p.drawRoundedRect(QRectF(2.5, 5, 3, max(4, self.height() - 10)), 1.5, 1.5)
         title = ('✓ ' if self.record.get('status') == 'Done' else '') + self.full_title
-        font = QFont('Inter', 9, QFont.Weight.Medium)
+        font = ui_font(12, QFont.Weight.DemiBold)
         font.setStrikeOut(self.record.get('status') == 'Done')
         p.setFont(font)
         title = p.fontMetrics().elidedText(title, Qt.TextElideMode.ElideRight, max(1, self.width() - 22))
-        p.setPen(QColor(themed_color('#37352f')))
-        p.drawText(QRectF(10, 4, self.width() - 20, 20), Qt.AlignmentFlag.AlignVCenter, title)
+        p.setPen(QColor(t.ink_muted if self.record.get('status') == 'Done' else t.ink_primary))
+        p.drawText(QRectF(11, 4, self.width() - 19, 20), Qt.AlignmentFlag.AlignVCenter, title)
         if self.tag:
-            p.setFont(QFont('Inter', 8))
-            p.setPen(QColor(themed_color('#696864')))
+            p.setFont(ui_font(11))
+            p.setPen(QColor(t.ink_secondary))
             tag = p.fontMetrics().elidedText(self.tag, Qt.TextElideMode.ElideRight, max(1, self.width() - 20))
-            p.drawText(QRectF(10, 25, self.width() - 20, 19), Qt.AlignmentFlag.AlignVCenter, tag)
+            p.drawText(QRectF(11, 24, self.width() - 19, 19), Qt.AlignmentFlag.AlignVCenter, tag)
         p.end()
 
     def mouseMoveEvent(self, event):
@@ -114,25 +117,38 @@ class CalendarCell(QFrame):
     day_note = Signal(object)
 
     def __init__(self, day, in_month=True, marker=None):
+        from .tokens import current_tokens
         super().__init__()
+        t = current_tokens()
         self.day = day
         self.setObjectName('calendarCell')
+        self.setProperty('tablaThemed', True)
         self.setAcceptDrops(True)
         self.setMinimumSize(85, 105)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        bg = COLORS.get(marker, ('white' if in_month else '#fafaf9', ''))[0]
-        self.setStyleSheet(f'QFrame#calendarCell {{background:{bg};border-right:1px solid #e5e5e3;border-bottom:1px solid #e5e5e3;}}')
+        if marker and marker in COLORS:
+            bg = themed_color(COLORS[marker][0])
+        elif not in_month:
+            bg = t.bg_surface
+        else:
+            bg = t.bg_canvas
+        self.setStyleSheet(
+            f'QFrame#calendarCell {{background:{bg};border:none;border-right:1px solid {t.border_subtle};border-bottom:1px solid {t.border_subtle};}}'
+        )
         self.setAccessibleName(day.strftime('%A, %B %d'))
         self.v = QVBoxLayout(self)
-        self.v.setContentsMargins(6, 6, 6, 6)
+        self.v.setContentsMargins(7, 6, 7, 6)
         self.v.setSpacing(4)
         number = label(str(day.day))
+        number.setProperty('tablaThemed', True)
         number.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        number.setFixedSize(24, 24)
+        number.setFixedSize(26, 24)
         if day == date.today():
-            number.setStyleSheet('background:#2383e2;color:white;border-radius:12px;font-size:12px;')
+            number.setStyleSheet(f'background:{t.bg_pill};color:{t.ink_inverse};border-radius:8px;font-size:12px;font-weight:600;')
         elif not in_month:
-            number.setStyleSheet('color:#aaa9a3;')
+            number.setStyleSheet(f'color:{t.ink_muted};font-size:12px;')
+        else:
+            number.setStyleSheet(f'color:{t.ink_secondary};font-size:12px;font-weight:500;')
         self.v.addLayout(row(None, number))
 
     def mouseDoubleClickEvent(self, event):
@@ -225,56 +241,73 @@ class Timeline(QWidget):
         self.setAccessibleName('Weekly time grid. Drag appointments to reschedule; drag their bottom edge to resize.')
 
     def position(self, point):
-        width = (self.width() - 58) / len(self.days)
-        index = max(0, min(len(self.days) - 1, int((point.x() - 58) / width)))
+        width = (self.width() - 62) / len(self.days)
+        index = max(0, min(len(self.days) - 1, int((point.x() - 62) / width)))
         minutes = round((point.y() / self.hour_height * 60 + self.start_hour * 60) / 15) * 15
         return self.days[index].isoformat(), max(0, min(1425, minutes))
 
     def paintEvent(self, event):
+        from .tokens import current_tokens, ui_font, mono_font
+        t = current_tokens()
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(themed_color('white')))
-        width = (self.width() - 58) / len(self.days)
-        p.setFont(QFont('Inter', 9))
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), QColor(t.bg_canvas))
+        width = (self.width() - 62) / len(self.days)
+        p.setFont(mono_font(10))
+        grid_line = QColor(t.border_subtle)
+        half_line = QColor(t.border_subtle)
+        half_line.setAlpha(95)
         for hour in range(self.start_hour, self.end_hour + 1):
             y = (hour - self.start_hour) * self.hour_height
-            p.setPen(QColor(themed_color('#eeeeec')))
-            p.drawLine(58, y, self.width(), y)
-            p.setPen(QColor(themed_color('#8b8b85')))
-            p.drawText(QRectF(0, y + 3, 49, 20), Qt.AlignmentFlag.AlignRight, f'{hour % 12 or 12} {"AM" if hour % 24 < 12 else "PM"}')
+            p.setPen(QPen(grid_line, 1))
+            p.drawLine(62, y, self.width(), y)
+            if hour < self.end_hour:
+                p.setPen(QPen(half_line, 1, Qt.PenStyle.DotLine))
+                hy = y + self.hour_height // 2
+                p.drawLine(62, hy, self.width(), hy)
+                p.setPen(QColor(t.ink_muted))
+                p.drawText(QRectF(4, y + 3, 50, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop, f'{hour % 12 or 12} {"AM" if hour % 24 < 12 else "PM"}')
         self.rects = []
         for index, day in enumerate(self.days):
-            x = 58 + index * width
-            p.setPen(QColor(themed_color('#eeeeec')))
+            x = 62 + index * width
+            p.setPen(QPen(grid_line, 1))
             p.drawLine(int(x), 0, int(x), self.height())
             matching = [r for r in self.records if r.get('date') == day.isoformat() and r.get('time')]
             for start, end, record, lane, count in overlapping_columns(matching):
                 y = (start / 60 - self.start_hour) * self.hour_height
-                h = max(23, (end - start) / 60 * self.hour_height - 2)
-                rect = QRectF(x + 3 + lane * (width - 6) / count, y + 1, (width - 6) / count - 2, h)
+                h = max(24, (end - start) / 60 * self.hour_height - 2)
+                rect = QRectF(x + 4 + lane * (width - 8) / count, y + 1, (width - 8) / count - 2, h)
                 bg, accent = COLORS.get(record.get('color', 'blue'), COLORS['blue'])
-                p.setPen(Qt.PenStyle.NoPen)
+                p.setPen(QPen(QColor(t.border_subtle), 1))
                 p.setBrush(QColor(themed_color(bg)))
-                p.drawRoundedRect(rect, 3, 3)
-                p.fillRect(QRectF(rect.x(), rect.y(), 3, rect.height()), QColor(accent))
-                p.setPen(QColor(themed_color('#303332')))
-                p.setFont(QFont('Inter', 9, QFont.Weight.Medium))
+                p.drawRoundedRect(rect, 7, 7)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(accent))
+                p.drawRoundedRect(QRectF(rect.x() + 2, rect.y() + 4, 3, max(4, rect.height() - 8)), 1.5, 1.5)
+                p.setPen(QColor(t.ink_primary))
+                p.setFont(ui_font(12, QFont.Weight.DemiBold))
                 p.save()
-                p.setClipRect(rect.adjusted(6, 3, -3, -2))
-                available = max(1, int(rect.width() - 12))
+                p.setClipRect(rect.adjusted(7, 3, -4, -2))
+                available = max(1, int(rect.width() - 14))
                 title = p.fontMetrics().elidedText(record['title'], Qt.TextElideMode.ElideRight, available)
-                p.drawText(QRectF(rect.x() + 7, rect.y() + 3, available, 18), Qt.AlignmentFlag.AlignVCenter, title)
+                p.drawText(QRectF(rect.x() + 9, rect.y() + 3, available, 18), Qt.AlignmentFlag.AlignVCenter, title)
                 if h >= 42:
-                    p.setFont(QFont('Inter', 8))
+                    p.setFont(mono_font(10))
+                    p.setPen(QColor(t.ink_secondary))
                     times = p.fontMetrics().elidedText(record['time'] + '–' + record.get('end_time', ''), Qt.TextElideMode.ElideRight, available)
-                    p.drawText(QRectF(rect.x() + 7, rect.y() + 23, available, 16), Qt.AlignmentFlag.AlignVCenter, times)
+                    p.drawText(QRectF(rect.x() + 9, rect.y() + 22, available, 16), Qt.AlignmentFlag.AlignVCenter, times)
                 p.restore()
                 self.rects.append((rect, record, start, end))
         if date.today() in self.days:
             index = self.days.index(date.today())
             now = datetime.now()
             y = (now.hour + now.minute / 60 - self.start_hour) * self.hour_height
-            p.setPen(QPen(QColor('#e16f65'), 1.5))
-            p.drawLine(int(58 + index * width), int(y), int(58 + (index + 1) * width), int(y))
+            x0 = 62 + index * width
+            p.setPen(QPen(QColor('#e11d48'), 1.5))
+            p.drawLine(int(x0), int(y), int(x0 + width), int(y))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor('#e11d48'))
+            p.drawEllipse(QRectF(x0 - 3.5, y - 3.5, 7, 7))
         p.end()
 
     def mousePressEvent(self, event):

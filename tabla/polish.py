@@ -30,6 +30,10 @@ def fade_in(widget, duration=150):
     animation.setStartValue(.84 if effect.opacity() >= .99 else effect.opacity())
     animation.setEndValue(1.0)
     animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+    def cleanup():
+        if getattr(widget, '_fade', None) is animation and widget.graphicsEffect() is effect:
+            widget.setGraphicsEffect(None)
+    animation.finished.connect(cleanup)
     widget._fade = animation
     animation.start()
 
@@ -208,15 +212,15 @@ class SoftTooltip(QFrame):
         layout.setContentsMargins(7, 6, 7, 9)
         bubble = QFrame()
         bubble.setObjectName('tooltipBubble')
-        bubble.setStyleSheet('QFrame#tooltipBubble {background:#303134;border:1px solid #515256;border-radius:9px;}')
+        self._bubble = bubble
         inner = QVBoxLayout(bubble)
         inner.setContentsMargins(11, 7, 11, 7)
         self.label = QLabel()
         self.label.setTextFormat(Qt.TextFormat.PlainText)
         self.label.setWordWrap(True)
         self.label.setMaximumWidth(360)
-        self.label.setStyleSheet('color:#f5f5f5;font-family:Inter;font-size:12px;background:transparent;')
         inner.addWidget(self.label)
+        self._apply_theme()
         shadow = QGraphicsDropShadowEffect(bubble)
         shadow.setBlurRadius(14)
         shadow.setOffset(0, 3)
@@ -224,7 +228,18 @@ class SoftTooltip(QFrame):
         bubble.setGraphicsEffect(shadow)
         layout.addWidget(bubble)
 
+    def _apply_theme(self):
+        from .tokens import current_tokens
+        t = current_tokens()
+        self._bubble.setStyleSheet(
+            f'QFrame#tooltipBubble {{background:{t.tooltip_bg};border:1px solid {t.tooltip_border};border-radius:10px;}}'
+        )
+        self.label.setStyleSheet(
+            f'color:{t.tooltip_fg};font-family:Inter;font-size:12px;font-weight:500;background:transparent;'
+        )
+
     def show_for(self, widget, text, point):
+        self._apply_theme()
         if self.isVisible() and self.anchor is widget and self.label.text() == text:
             return
         self.anchor = widget
