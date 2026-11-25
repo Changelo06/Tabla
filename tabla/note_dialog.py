@@ -385,26 +385,21 @@ class NoteDialog(LegacyNoteDialog):
                 self._animate_sidecar_entry()
 
     def _animate_sidecar_entry(self):
-        from .spring import SpringAnimation, SECONDARY_LAG
-        target_pos = QPoint(self.sidecar.pos())
-        start_x = target_pos.x() - 10
-        self.sidecar.move(start_x, target_pos.y())
+        from .spring import HighRefreshSpring, SECONDARY_LAG
         self.sidecar.setWindowOpacity(0.0)
-        anim = SpringAnimation(SECONDARY_LAG, 210, self.sidecar)
+        anim = HighRefreshSpring(SECONDARY_LAG, 165, self.sidecar)
         def step(v):
-            p = float(v)
-            self.sidecar.move(round(start_x + 10.0 * p), target_pos.y())
-            self.sidecar.setWindowOpacity(max(0.0, min(1.0, p)))
+            self.sidecar.setWindowOpacity(max(0.0, min(1.0, float(v))))
         anim.valueChanged.connect(step)
         self.sidecar._lag_anim = anim
-        QTimer.singleShot(55, anim.start)
+        QTimer.singleShot(40, anim.start)
 
     def done(self, result):
         if self._closing_pending:
             self.finish_closing()
             return
         was_opening = self._opening_pending
-        presentation = (QRect(self._morph_overlay.geometry()), self._morph_overlay.progress) if self._morph_overlay else None
+        presentation = (self._morph_overlay.current_global_rect(), self._morph_overlay.progress) if self._morph_overlay else None
         self.finish_opening()
         if not self.save():
             return

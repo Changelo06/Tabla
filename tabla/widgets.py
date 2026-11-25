@@ -49,8 +49,9 @@ def button(text="", callback=None, name=None, glyph=None, elide=False):
         result.setObjectName(name)
     if glyph:
         t = current_tokens()
-        result.setIcon(icon(glyph, t.ink_inverse if name == "primary" else t.ink_secondary, preserve_color=(name == "primary")))
-        result.setIconSize(QSize(19, 19))
+        px = 16 if text else 18
+        result.setIcon(icon(glyph, t.ink_inverse if name == "primary" else t.ink_secondary, size=px, preserve_color=(name == "primary")))
+        result.setIconSize(QSize(px, px))
     if callback:
         result.clicked.connect(callback)
     return result

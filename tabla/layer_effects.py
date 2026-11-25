@@ -63,6 +63,7 @@ class WorkspaceBackdrop(QWidget):
         self.strength = 1.0
         self.setGeometry(parent.rect())
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
 
     def set_strength(self, value):
         self.strength = max(0.0, min(1.0, value))

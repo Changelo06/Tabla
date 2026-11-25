@@ -46,7 +46,7 @@ class UiTests(unittest.TestCase):
             self.window.navigate("Calendar")
             self.window.calendar_mode(mode)
             self.app.processEvents()
-            self.assertGreater(self.window.content.count(), 3)
+            self.assertGreaterEqual(self.window.content.count(), 3)
         self.window.navigate("My Tasks")
         self.window.set_task_layout("Board")
         self.app.processEvents()

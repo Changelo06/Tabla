@@ -210,15 +210,206 @@ def decode_nodes(cursor, nodes):
 
 
 def table_format(columns):
+    from .tokens import current_tokens
+    t = current_tokens()
     fmt = QTextTableFormat()
     fmt.setBorder(1)
     fmt.setBorderStyle(QTextFrameFormat.BorderStyle.BorderStyle_Solid)
-    fmt.setBorderBrush(QColor('#92969b'))
-    fmt.setCellPadding(6)
+    fmt.setBorderBrush(QColor(t.border_strong))
+    fmt.setCellPadding(8)
     fmt.setCellSpacing(0)
+    fmt.setTopMargin(8)
+    fmt.setBottomMargin(10)
     fmt.setWidth(QTextLength(QTextLength.Type.PercentageLength, 100))
     fmt.setColumnWidthConstraints([QTextLength(QTextLength.Type.PercentageLength, 100 / columns)] * columns)
     return fmt
+
+
+def _split_md_row(line: str) -> list[str]:
+    stripped = line.strip()
+    if stripped.startswith('|'):
+        stripped = stripped[1:]
+    if stripped.endswith('|') and not stripped.endswith(r'\|'):
+        stripped = stripped[:-1]
+    cells = re.split(r'(?<!\\)\|', stripped)
+    return [c.replace(r'\|', '|').strip() for c in cells]
+
+
+def _is_md_separator(line: str) -> bool:
+    if '|' not in line:
+        return False
+    cells = _split_md_row(line)
+    return len(cells) >= 2 and all(bool(re.fullmatch(r':?-{2,}:?', c.strip())) for c in cells if c.strip() != '') and any(c.strip() for c in cells)
+
+
+def _normalize_table_rows(rows: list[list[str]]) -> list[list[str]]:
+    if not rows:
+        return []
+    rows = rows[:2000]
+    cols = max(len(r) for r in rows)
+    cols = max(1, min(10, cols))
+    normalized = []
+    for r in rows:
+        if len(r) > cols:
+            r = r[:cols - 1] + [' · '.join(c for c in r[cols - 1:] if c)]
+        elif len(r) < cols:
+            r = list(r) + [''] * (cols - len(r))
+        normalized.append(r)
+    return normalized
+
+
+def parse_markdown_table_blocks(text: str):
+    """Split text into ('text', str) and ('table', rows, has_header) blocks if Markdown tables exist."""
+    lines = text.splitlines()
+    blocks = []
+    buf = []
+    i = 0
+    found_table = False
+    while i < len(lines):
+        if i + 1 < len(lines) and '|' in lines[i] and _is_md_separator(lines[i + 1]):
+            header = _split_md_row(lines[i])
+            if len(header) >= 2:
+                rows = [header]
+                j = i + 2
+                while j < len(lines) and '|' in lines[j] and lines[j].strip():
+                    rows.append(_split_md_row(lines[j]))
+                    j += 1
+                if buf:
+                    blocks.append(('text', '\n'.join(buf)))
+                    buf = []
+                blocks.append(('table', _normalize_table_rows(rows), True))
+                found_table = True
+                i = j
+                continue
+        buf.append(lines[i])
+        i += 1
+    if buf:
+        blocks.append(('text', '\n'.join(buf)))
+    return blocks if found_table else None
+
+
+def parse_html_table_blocks(html_text: str):
+    """Safely parse clipboard HTML containing <table> elements without loading external resources."""
+    from html.parser import HTMLParser
+
+    class _TableParser(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.blocks = []
+            self.text_buf = []
+            self.skip_depth = 0
+            self.table_depth = 0
+            self.rows = []
+            self.cur_row = None
+            self.cur_cell = None
+            self.has_header = False
+            self.in_thead = False
+
+        def _flush_text(self):
+            joined = ''.join(self.text_buf).strip()
+            self.text_buf.clear()
+            if joined:
+                self.blocks.append(('text', re.sub(r'\n{3,}', '\n\n', joined)))
+
+        def handle_starttag(self, tag, attrs):
+            tag = tag.lower()
+            if tag in ('script', 'style', 'head'):
+                self.skip_depth += 1
+                return
+            if self.skip_depth:
+                return
+            if tag == 'table':
+                if self.table_depth == 0:
+                    self._flush_text()
+                    self.rows = []
+                    self.has_header = False
+                self.table_depth += 1
+            elif self.table_depth == 1:
+                if tag == 'thead':
+                    self.in_thead = True
+                elif tag == 'tr':
+                    self.cur_row = []
+                elif tag in ('th', 'td'):
+                    if tag == 'th' or self.in_thead:
+                        self.has_header = True
+                    self.cur_cell = []
+                elif tag == 'br' and self.cur_cell is not None:
+                    self.cur_cell.append('\n')
+            elif tag in ('br', 'p', 'div', 'li', 'h1', 'h2', 'h3', 'h4'):
+                if self.text_buf and not self.text_buf[-1].endswith('\n'):
+                    self.text_buf.append('\n')
+
+        def handle_endtag(self, tag):
+            tag = tag.lower()
+            if tag in ('script', 'style', 'head'):
+                self.skip_depth = max(0, self.skip_depth - 1)
+                return
+            if self.skip_depth:
+                return
+            if tag == 'table' and self.table_depth > 0:
+                self.table_depth -= 1
+                if self.table_depth == 0 and self.rows:
+                    self.blocks.append(('table', _normalize_table_rows(self.rows), self.has_header))
+                    self.rows = []
+            elif self.table_depth == 1:
+                if tag == 'thead':
+                    self.in_thead = False
+                elif tag in ('th', 'td') and self.cur_cell is not None:
+                    text = re.sub(r'[ \t]+', ' ', ''.join(self.cur_cell)).strip()
+                    if self.cur_row is not None:
+                        self.cur_row.append(text)
+                    self.cur_cell = None
+                elif tag == 'tr' and self.cur_row is not None:
+                    if any(self.cur_row):
+                        self.rows.append(self.cur_row)
+                    self.cur_row = None
+
+        def handle_data(self, data):
+            if self.skip_depth:
+                return
+            if self.table_depth == 1 and self.cur_cell is not None:
+                self.cur_cell.append(data)
+            elif self.table_depth == 0:
+                self.text_buf.append(data)
+
+    parser = _TableParser()
+    parser.feed(html_text)
+    parser.close()
+    parser._flush_text()
+    return parser.blocks if any(b[0] == 'table' for b in parser.blocks) else None
+
+
+def _insert_inline_formatted(cursor, text: str, base_bold: bool = False):
+    """Insert cell text with lightweight Markdown **bold**, *italic*, and `code` formatting."""
+    token_re = re.compile(r'(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*]+\*)')
+    pos = 0
+    for m in token_re.finditer(text):
+        if m.start() > pos:
+            cf = QTextCharFormat()
+            if base_bold:
+                cf.setFontWeight(QFont.Weight.DemiBold)
+            cursor.insertText(text[pos:m.start()], cf)
+        tok = m.group(0)
+        cf = QTextCharFormat()
+        if tok.startswith(('**', '__')):
+            cf.setFontWeight(QFont.Weight.Bold)
+            inner = tok[2:-2]
+        elif tok.startswith('`'):
+            if base_bold:
+                cf.setFontWeight(QFont.Weight.DemiBold)
+            inner = tok[1:-1]
+        else:
+            if base_bold:
+                cf.setFontWeight(QFont.Weight.DemiBold)
+            cf.setFontItalic(True)
+            inner = tok[1:-1]
+        cursor.insertText(inner, cf)
+        pos = m.end()
+    if pos < len(text):
+        cf = QTextCharFormat()
+        if base_bold:
+            cf.setFontWeight(QFont.Weight.DemiBold)
+        cursor.insertText(text[pos:], cf)
 
 
 class RichNoteEditor(QTextEdit):
@@ -252,6 +443,7 @@ class RichNoteEditor(QTextEdit):
         self._check_hits = []
         self._check_hover = -1
         self._check_drag = None
+        self._check_drop_target = None
 
     insert_link = LinkEditor.insert_link
     dragEnterEvent = LinkEditor.dragEnterEvent
@@ -353,6 +545,7 @@ class RichNoteEditor(QTextEdit):
         self._layout_checklists()
         cursor.endEditBlock()
         self.setTextCursor(cursor)
+        self.viewport().update()
         self.setFocus()
 
     def cycle_list(self):
@@ -441,6 +634,10 @@ class RichNoteEditor(QTextEdit):
         self._layout_checklists()
         cursor.endEditBlock()
         self.setTextCursor(cursor)
+        self.viewport().update()
+        if action == 'toggle':
+            from . import foley
+            foley.play('pop')
         self.setFocus()
 
     def move_checklist_item(self, source, target):
@@ -484,48 +681,113 @@ class RichNoteEditor(QTextEdit):
         edit.endEditBlock()
         self.viewport().update()
 
-    def _paint_checklists(self):
-        from .theme import themed_color
-        self._check_hits = []
-        painter = QPainter(self.viewport())
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        ink = self.palette().text().color()
-        muted = QColor(ink); muted.setAlpha(145)
+    def _note_surface_color(self) -> QColor:
+        from .tokens import current_tokens
+        ancestor = self.parentWidget()
+        while ancestor is not None:
+            if hasattr(ancestor, 'surface_background'):
+                return QColor(ancestor.surface_background())
+            ancestor = ancestor.parentWidget()
+        return QColor(current_tokens().bg_elevated)
+
+    def _compute_check_hits(self):
+        hits = []
         block = self.document().begin()
+        vw = self.viewport().width()
+        vh = self.viewport().height()
         while block.isValid():
             if self._is_check(block):
                 cursor = QTextCursor(block)
                 rect = self.cursorRect(cursor)
                 x, y = rect.x(), rect.y() + 2
-                if -80 < y < self.viewport().height():
-                    # Cover Qt's platform-specific boxed-X marker with a consistent gutter.
-                    painter.fillRect(QRectF(x - 51, y - 2, 49, rect.height() + 4), QColor(themed_color('white')))
-                    grip = QRectF(x - 49, y - 3, 18, 25)
+                if -80 < y < vh:
+                    grip = QRectF(x - 50, y - 3, 17, 24)
                     box = QRectF(x - 29, y, 16, 16)
-                    remove = QRectF(self.viewport().width() - 27, y - 3, 24, 24)
-                    painter.setPen(Qt.PenStyle.NoPen); painter.setBrush(muted)
+                    remove = QRectF(vw - 27, y - 3, 24, 24)
+                    # Toggle checked first and kept strictly disjoint from grip so clicks on the box never start a drag.
+                    hits.append(('toggle', block.position(), box.adjusted(-2, -4, 4, 5)))
+                    hits.append(('drag', block.position(), grip))
+                    hits.append(('remove', block.position(), remove))
+                    if not self._is_check(block.next()):
+                        end = QTextCursor(block)
+                        end.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+                        add = QRectF(x - 32, self.cursorRect(end).bottom() + 10, 150, 25)
+                        hits.append(('add', block.position(), add))
+            block = block.next()
+        return hits
+
+    def _paint_checklists(self):
+        from .tokens import current_tokens
+        t = current_tokens()
+        self._check_hits = self._compute_check_hits()
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        ink = self.palette().text().color()
+        muted = QColor(ink)
+        muted.setAlpha(140)
+        accent = QColor(t.accent)
+        gutter_bg = self._note_surface_color()
+        block = self.document().begin()
+        vw = self.viewport().width()
+        vh = self.viewport().height()
+        while block.isValid():
+            if self._is_check(block):
+                cursor = QTextCursor(block)
+                rect = self.cursorRect(cursor)
+                x, y = rect.x(), rect.y() + 2
+                if -80 < y < vh:
+                    # Subtle highlight behind dragged checklist row
+                    if self._check_drag == block.position():
+                        hl = QColor(accent)
+                        hl.setAlpha(36 if t.dark else 24)
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(hl)
+                        painter.drawRoundedRect(QRectF(4, rect.y() - 3, vw - 8, rect.height() + 6), 7, 7)
+                    # Seamlessly mask Qt's built-in marker with the note's real surface color (no black box!)
+                    painter.fillRect(QRectF(x - 52, y - 3, 50, rect.height() + 6), gutter_bg)
+                    grip = QRectF(x - 50, y - 3, 17, 24)
+                    box = QRectF(x - 29, y, 16, 16)
+                    remove = QRectF(vw - 27, y - 3, 24, 24)
+                    # Subtle 6-dot drag grip
+                    grip_color = QColor(ink)
+                    grip_color.setAlpha(170 if (self._check_hover == block.position() or self._check_drag == block.position()) else 85)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(grip_color)
                     for dx in (0, 5):
                         for dy in (0, 5, 10):
                             painter.drawEllipse(QRectF(grip.x() + 5 + dx, y + 2 + dy, 2, 2))
                     checked = block.blockFormat().marker() == QTextBlockFormat.MarkerType.Checked
-                    painter.setPen(QPen(muted, 1.5)); painter.setBrush(Qt.BrushStyle.NoBrush)
-                    painter.drawRoundedRect(box, 2, 2)
                     if checked:
-                        painter.setPen(QPen(ink, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-                        painter.drawLine(QPointF(box.x() + 3, y + 8), QPointF(box.x() + 7, y + 12))
-                        painter.drawLine(QPointF(box.x() + 7, y + 12), QPointF(box.x() + 13, y + 4))
+                        painter.setPen(QPen(accent, 1.4))
+                        painter.setBrush(accent)
+                        painter.drawRoundedRect(box, 4, 4)
+                        check_fg = QColor(t.ink_inverse if accent.lightness() > 165 else '#ffffff')
+                        painter.setPen(QPen(check_fg, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+                        painter.drawLine(QPointF(box.x() + 3.6, y + 8.2), QPointF(box.x() + 6.8, y + 11.4))
+                        painter.drawLine(QPointF(box.x() + 6.8, y + 11.4), QPointF(box.x() + 12.6, y + 4.8))
+                    else:
+                        border_col = QColor(accent if self._check_hover == block.position() else muted)
+                        painter.setPen(QPen(border_col, 1.5))
+                        painter.setBrush(Qt.BrushStyle.NoBrush)
+                        painter.drawRoundedRect(box, 4, 4)
                     if self._check_hover == block.position():
-                        painter.setPen(QPen(muted, 1.5))
+                        painter.setPen(QPen(muted, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
                         painter.drawLine(remove.center() + QPointF(-4, -4), remove.center() + QPointF(4, 4))
                         painter.drawLine(remove.center() + QPointF(-4, 4), remove.center() + QPointF(4, -4))
-                    for action, hit in (('drag', grip), ('toggle', box.adjusted(-3, -4, 4, 5)), ('remove', remove)):
-                        self._check_hits.append((action, block.position(), hit))
+                    # Live drag-drop insertion line when dragging a checklist row
+                    if self._check_drag is not None and self._check_drop_target == block.position() and self._check_drop_target != self._check_drag:
+                        line_y = rect.bottom() + 4 if self._check_drag < block.position() else rect.top() - 4
+                        painter.setPen(QPen(accent, 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                        painter.drawLine(QPointF(x - 28, line_y), QPointF(vw - 24, line_y))
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(accent)
+                        painter.drawEllipse(QPointF(x - 28, line_y), 3.0, 3.0)
                     if not self._is_check(block.next()):
-                        end = QTextCursor(block); end.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+                        end = QTextCursor(block)
+                        end.movePosition(QTextCursor.MoveOperation.EndOfBlock)
                         add = QRectF(x - 32, self.cursorRect(end).bottom() + 10, 150, 25)
                         painter.setPen(muted)
                         painter.drawText(add, Qt.AlignmentFlag.AlignVCenter, '+   List item')
-                        self._check_hits.append(('add', block.position(), add))
             block = block.next()
         painter.end()
 
@@ -725,16 +987,26 @@ class RichNoteEditor(QTextEdit):
             iterator += 1
         return cursor.charFormat().toImageFormat()
 
+    def _checklist_hit_at(self, pos):
+        self._check_hits = self._compute_check_hits()
+        for action, position, rect in self._check_hits:
+            if rect.contains(pos):
+                return action, position
+        return None, None
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            for action, position, rect in self._check_hits:
-                if rect.contains(event.position()):
-                    if action == 'drag':
-                        self._check_drag = position
-                    else:
-                        self._check_action(action, position)
-                    event.accept()
-                    return
+            action, position = self._checklist_hit_at(event.position())
+            if action is not None:
+                if action == 'drag':
+                    self._check_drag = position
+                    self._check_drop_target = position
+                    self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+                    self.viewport().update()
+                else:
+                    self._check_action(action, position)
+                event.accept()
+                return
         cursor = self.image_at_cursor()
         if cursor and event.button() == Qt.MouseButton.LeftButton:
             rect = self.image_rect(cursor)
@@ -744,21 +1016,37 @@ class RichNoteEditor(QTextEdit):
                 return
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            action, position = self._checklist_hit_at(event.position())
+            if action in ('toggle', 'add', 'remove'):
+                self._check_action(action, position)
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
+
     def mouseMoveEvent(self, event):
         block = self.cursorForPosition(event.position().toPoint()).block()
         hover = block.position() if self._is_check(block) else -1
-        for _, position, rect in self._check_hits:
-            if rect.contains(event.position()):
-                hover = position
-                break
+        action_hit, pos_hit = self._checklist_hit_at(event.position())
+        if pos_hit is not None:
+            hover = pos_hit
         if hover != self._check_hover:
             self._check_hover = hover
             self.viewport().update()
         if self._check_drag is not None:
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+            target = block.position() if self._is_check(block) else None
+            if target != self._check_drop_target:
+                self._check_drop_target = target
+                self.viewport().update()
             return
-        over_grip = any(action == 'drag' and rect.contains(event.position()) for action, _, rect in self._check_hits)
-        self.viewport().setCursor(Qt.CursorShape.OpenHandCursor if over_grip else Qt.CursorShape.IBeamCursor)
+        if action_hit == 'drag':
+            self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+        elif action_hit in ('toggle', 'remove', 'add'):
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
         if self._resize_drag:
             cursor, top_left, width, height = self._resize_drag
             new_width = max(16, event.position().x() - top_left.x())
@@ -855,9 +1143,13 @@ class RichNoteEditor(QTextEdit):
 
     def mouseReleaseEvent(self, event):
         if self._check_drag is not None:
-            source, self._check_drag = self._check_drag, None
+            source, target = self._check_drag, self._check_drop_target
+            self._check_drag = None
+            self._check_drop_target = None
             self.viewport().unsetCursor()
-            self.move_checklist_item(source, self.cursorForPosition(event.position().toPoint()).block().position())
+            dest = target if target is not None else self.cursorForPosition(event.position().toPoint()).block().position()
+            self.move_checklist_item(source, dest)
+            self.viewport().update()
             return
         if self._resize_drag:
             self._resize_drag[0].endEditBlock()
@@ -890,6 +1182,35 @@ class RichNoteEditor(QTextEdit):
         else:
             super().dropEvent(event)
 
+    def _insert_parsed_blocks(self, blocks):
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        for idx, block in enumerate(blocks):
+            kind = block[0]
+            if kind == 'text':
+                if idx > 0 and cursor.block().text():
+                    cursor.insertBlock()
+                cursor.insertText(block[1])
+            elif kind == 'table':
+                _, rows, has_header = block
+                if not rows:
+                    continue
+                cols = len(rows[0])
+                fmt = table_format(cols)
+                fmt.setHeaderRowCount(1 if has_header else 0)
+                if cursor.block().text().strip():
+                    cursor.insertBlock()
+                table = cursor.insertTable(len(rows), cols, fmt)
+                for r, row_cells in enumerate(rows):
+                    for c, cell_text in enumerate(row_cells):
+                        cell_cur = table.cellAt(r, c).firstCursorPosition()
+                        _insert_inline_formatted(cell_cur, cell_text, base_bold=(r == 0 and has_header))
+                cursor.setPosition(table.lastPosition() + 1)
+                if idx < len(blocks) - 1:
+                    cursor.insertBlock()
+        cursor.endEditBlock()
+        self.setTextCursor(cursor)
+
     def insertFromMimeData(self, source):
         if source.hasImage():
             import tempfile
@@ -898,8 +1219,17 @@ class RichNoteEditor(QTextEdit):
                 path = str(Path(folder) / 'Pasted image.png')
                 if image.save(path):
                     self.insert_images([path])
-        else:
-            self.textCursor().insertText(source.text())
+            return
+        if not self.textCursor().currentTable():
+            blocks = None
+            if source.hasHtml() and '<table' in source.html().lower():
+                blocks = parse_html_table_blocks(source.html())
+            if blocks is None and source.hasText() and '|' in source.text():
+                blocks = parse_markdown_table_blocks(source.text())
+            if blocks:
+                self._insert_parsed_blocks(blocks)
+                return
+        self.textCursor().insertText(source.text())
 
     def contextMenuEvent(self, event):
         menu = self.createStandardContextMenu()

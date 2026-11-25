@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/App-454545?style=flat" alt="App">
 </p>
 <p align="center">A little order. A lot more room.</p>
-<p align="center">A local personal workspace for Windows · Version 1.0.0</p>
+<p align="center">A local personal workspace for Windows · Version 1.0.1</p>
 
 ![TABLA Home with sample tasks, calendar and notes](docs/screenshots/home.png)
 
@@ -30,7 +30,7 @@ All screenshots use a separate sample workspace.
 
 ## Run the Windows app
 
-1. Download `Tabla-Windows-1.0.0.zip` from [Releases](https://github.com/Changelo06/Tabla/releases). Choose the Windows package, rather than the automatic source-code archive.
+1. Download `Tabla-Windows-1.0.1.zip` from [Releases](https://github.com/Changelo06/Tabla/releases). Choose the Windows package, rather than the automatic source-code archive.
 2. Right-click the ZIP and choose **Extract All**.
 3. Move the complete `Tabla` folder to a convenient location, such as `C:\Users\YourName\Apps\Tabla`.
 4. Open **Tabla.exe**. Python is not required.

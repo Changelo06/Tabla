@@ -2,7 +2,7 @@
 from datetime import date
 import copy
 from PySide6.QtCore import Qt, Signal, QSize, QMimeData, QPoint, QPointF, QRectF, QTimer
-from PySide6.QtGui import QDrag, QPainter, QColor, QFont, QPen, QTextLayout, QTextOption
+from PySide6.QtGui import QDrag, QPainter, QPainterPath, QPixmap, QColor, QFont, QPen, QTextLayout, QTextOption
 from PySide6.QtWidgets import (QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QStyledItemDelegate, QAbstractItemView, QMenu, QStyle,
     QPushButton, QMessageBox, QScrollArea)
@@ -13,6 +13,42 @@ from .board_model import BoardModel
 
 CARD_MIME = 'application/x-tabla-card'
 LIST_MIME = 'application/x-tabla-list'
+
+
+def _lifted_drag_pixmap(source: QPixmap, radius: float = 11.0, tilt_deg: float = 1.6) -> tuple[QPixmap, QPoint]:
+    """Create a tactile lifted drag preview with rounded clip, subtle tilt, and elevation shadow."""
+    t = current_tokens()
+    dpr = source.devicePixelRatio() or 1.0
+    lw = source.width() / dpr
+    lh = source.height() / dpr
+    pad = 16
+    out = QPixmap(max(1, round((lw + pad * 2) * dpr)), max(1, round((lh + pad * 2) * dpr)))
+    out.setDevicePixelRatio(dpr)
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    p.translate(pad + lw / 2.0, pad + lh / 2.0)
+    p.rotate(tilt_deg)
+    rect = QRectF(-lw / 2.0, -lh / 2.0, lw, lh)
+    # Soft multi-ring lift shadow
+    p.setPen(Qt.PenStyle.NoPen)
+    base_alpha = 38 if t.dark else 18
+    for expand, mult in ((9.0, 0.35), (5.0, 0.55), (2.0, 0.85)):
+        p.setBrush(QColor(0, 0, 0, round(base_alpha * mult)))
+        p.drawRoundedRect(rect.adjusted(-expand, -expand + 3.0, expand, expand + 5.0), radius + 2, radius + 2)
+    clip = QPainterPath()
+    clip.addRoundedRect(rect, radius, radius)
+    p.save()
+    p.setClipPath(clip)
+    p.setOpacity(0.95)
+    p.drawPixmap(rect, source, QRectF(source.rect()))
+    p.restore()
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.setPen(QPen(QColor(t.accent), 1.4))
+    p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+    p.end()
+    return out, QPoint(pad, pad)
 
 
 class CardDelegate(QStyledItemDelegate):
@@ -60,6 +96,15 @@ class CardDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(option.rect).adjusted(4, 3, -4, -4)
+        if getattr(self.parent(), '_dragging_id', None) == record.get('id'):
+            ghost_bg = QColor(t.accent)
+            ghost_bg.setAlpha(22 if t.dark else 16)
+            ghost_pen = QPen(QColor(t.accent), 1.2, Qt.PenStyle.DashLine)
+            painter.setBrush(ghost_bg)
+            painter.setPen(ghost_pen)
+            painter.drawRoundedRect(rect, 11, 11)
+            painter.restore()
+            return
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(0, 0, 0, 26 if t.dark else 10))
         painter.drawRoundedRect(rect.translated(0, 1.5), 11, 11)
@@ -163,6 +208,7 @@ class CardList(QListWidget):
                 menu(item.data(Qt.ItemDataRole.UserRole), self.viewport().mapToGlobal(point))
         self.customContextMenuRequested.connect(context)
         self._drop_index = None
+        self._dragging_id = None
         self._press = QPoint()
 
     def mousePressEvent(self, event):
@@ -170,15 +216,27 @@ class CardList(QListWidget):
         super().mousePressEvent(event)
 
     def startDrag(self, actions):
-        if not self.currentItem():
+        item = self.currentItem()
+        if not item:
             return
+        record_id = item.data(Qt.ItemDataRole.UserRole)['id']
+        item_rect = self.visualItemRect(item)
+        raw = self.viewport().grab(item_rect.adjusted(4, 3, -4, -4))
+        lifted, offset = _lifted_drag_pixmap(raw, radius=11.0, tilt_deg=1.6)
         drag = QDrag(self)
         mime = QMimeData()
-        mime.setData(CARD_MIME, self.currentItem().data(Qt.ItemDataRole.UserRole)['id'].encode())
+        mime.setData(CARD_MIME, record_id.encode())
         drag.setMimeData(mime)
-        drag.setPixmap(self.viewport().grab(self.visualItemRect(self.currentItem())))
-        drag.setHotSpot(self._press - self.visualItemRect(self.currentItem()).topLeft())
-        drag.exec(Qt.DropAction.MoveAction)
+        drag.setPixmap(lifted)
+        drag.setHotSpot(self._press - item_rect.topLeft() + offset - QPoint(4, 3))
+        self._dragging_id = record_id
+        self.viewport().update()
+        try:
+            drag.exec(Qt.DropAction.MoveAction)
+        finally:
+            self._dragging_id = None
+            self._drop_index = None
+            self.viewport().update()
 
     def keyPressEvent(self, event):
         if self.currentItem() and (event.key() == Qt.Key.Key_Menu or event.key() == Qt.Key.Key_F10 and event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
@@ -230,10 +288,18 @@ class CardList(QListWidget):
     def paintEvent(self, event):
         super().paintEvent(event)
         if self._drop_index is not None:
+            t = current_tokens()
+            accent = QColor(t.accent)
             painter = QPainter(self.viewport())
-            painter.setPen(QPen(QColor('#2383e2'), 3))
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             y = self.visualItemRect(self.item(self._drop_index)).top() if self._drop_index < self.count() else self.visualItemRect(self.item(self.count() - 1)).bottom() + 3 if self.count() else 5
-            painter.drawLine(8, y, self.viewport().width() - 8, y)
+            painter.setPen(QPen(accent, 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.drawLine(QPointF(10, y), QPointF(self.viewport().width() - 10, y))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(accent)
+            painter.drawEllipse(QPointF(10, y), 3.4, 3.4)
+            painter.drawEllipse(QPointF(self.viewport().width() - 10, y), 3.4, 3.4)
+            painter.end()
 
 
 class ListGrip(QPushButton):
@@ -261,9 +327,11 @@ class ListGrip(QPushButton):
             mime.setData(LIST_MIME, self.column['id'].encode())
             drag.setMimeData(mime)
             panel = self.parentWidget()
-            drag.setPixmap(panel.grab().scaledToWidth(220, Qt.TransformationMode.SmoothTransformation))
+            scaled = panel.grab().scaledToWidth(220, Qt.TransformationMode.SmoothTransformation)
+            lifted, offset = _lifted_drag_pixmap(scaled, radius=13.0, tilt_deg=1.4)
+            drag.setPixmap(lifted)
             point = self.mapTo(panel, self.origin)
-            drag.setHotSpot(QPoint(round(point.x() * 220 / panel.width()), round(point.y() * 220 / panel.width())))
+            drag.setHotSpot(QPoint(round(point.x() * 220 / panel.width()), round(point.y() * 220 / panel.width())) + offset)
             drag.exec(Qt.DropAction.MoveAction)
             self.setDown(False)
             self.origin = None
@@ -287,8 +355,10 @@ class ListPanel(QFrame):
         title.editingFinished.connect(lambda: board.rename(column['id'], title))
         cards = board.grouped.get(column['id'], [])
         self.count = label(str(len(cards)), 'fieldLabel')
-        menu = button('•••', lambda: board.list_menu(column, self), 'text')
+        menu = button('', lambda: board.list_menu(column, self), 'text', 'more-h')
+        menu.setFixedSize(26, 26)
         menu.setAccessibleName(column['title'] + ' list actions')
+        menu.setToolTip(column['title'] + ' list actions')
         layout.addLayout(row(ListGrip(column), title, self.count, menu))
         self.cards = CardList(column, cards, board.opened, board.card_menu)
         self.cards.moved.connect(board.move_card)
@@ -355,15 +425,30 @@ class ListPanel(QFrame):
         self.setFixedHeight(max(120, min(max(120, self.board.viewport().height() - 12), target)))
         layout.activate()
 
+    def _set_list_drop_highlight(self, active: bool):
+        t = current_tokens()
+        if active:
+            self.setProperty('tablaThemed', True)
+            self.setStyleSheet(f'QFrame#boardList {{background:{t.bg_surface};border:1.5px solid {t.accent};border-radius:14px;}}')
+        else:
+            self.setProperty('tablaThemed', False)
+            self.setStyleSheet('')
+
     def dragEnterEvent(self, event):
         if event.mimeData().hasFormat(LIST_MIME):
+            self._set_list_drop_highlight(True)
             event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self._set_list_drop_highlight(False)
+        super().dragLeaveEvent(event)
 
     def dragMoveEvent(self, event):
         if event.mimeData().hasFormat(LIST_MIME):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
+        self._set_list_drop_highlight(False)
         if event.mimeData().hasFormat(LIST_MIME):
             source = bytes(event.mimeData().data(LIST_MIME)).decode()
             if source == self.column['id']:

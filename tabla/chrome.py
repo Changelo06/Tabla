@@ -117,7 +117,7 @@ class TitleBar(QFrame):
         self.search.setAccessibleName('Search workspace')
         self.search.setToolTip('Search notes, tasks, projects and meetings · Enter to search · Ctrl+K')
         self.search.setClearButtonEnabled(True)
-        self.search.setMinimumWidth(80)
+        self.search.setMinimumWidth(48)
         self.search.setMaximumWidth(520)
         self.search.setFixedHeight(28)
         self.search.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -148,9 +148,12 @@ class TitleBar(QFrame):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         compact = self.width() < 800
+        ultra_narrow = self.width() < 460
         for control in self.menu_buttons:
             control.setVisible(not compact)
         self.overflow.setVisible(compact)
+        self.back.setVisible(not ultra_narrow)
+        self.forward.setVisible(not ultra_narrow)
 
     def set_native_maximize_hover(self, hovered):
         hovered = bool(hovered)
@@ -234,8 +237,6 @@ class TitleBar(QFrame):
         appearance_menu.aboutToShow.connect(_sync_appearance_menu)
         layout = self.menus['Layout']
         layout.addAction('Toggle icon sidebar', w.toggle_sidebar)
-        layout.addAction('Notes as cards', lambda: w.show_note_layout('Grid'))
-        layout.addAction('Notes as a list', lambda: w.show_note_layout('List'))
         layout.addSeparator()
         for title in ('Month', 'Week', 'Day'):
             layout.addAction('Calendar · ' + title.lower(), lambda checked=False, mode=title: w.show_calendar_layout(mode))

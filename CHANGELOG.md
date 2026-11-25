@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- **Unified Icon System:** Standardized all navigation rail and toolbar icons onto one crisp Lucide-style stroke family (fixing the mismatched active Home icon and blurry dark glow), upgraded the Settings gear, added dedicated `table` and horizontal `more-h` glyphs, and matched Home task icons cleanly.
+- **Note Checklists Fixed & Polished:** Fixed checklist unchecking and fast double-click toggling with disjoint hitboxes and immediate viewport repaints, eliminated the dark gutter box on themed/colored notes, added contrast-adaptive filled rounded checkboxes, and added live row-drag insertion indicators.
+- **ChatGPT / Markdown / HTML Table Paste:** Pasting HTML `<table>` or Markdown pipe tables from ChatGPT or browsers into notes now auto-formats into styled native tables with bold headers and single-step undo.
+- **60–120fps Note Motion & Tactile Dragging:** Replaced per-frame translucent HWND resizing with a fixed-geometry `PreciseTimer` (~120Hz) subpixel canvas for silky note open/close transitions, plus lifted tilted drag previews, ghost source slots, and accent drop bars on boards.
+- **Cleaner Chrome & Narrow Vertical Mode:** Removed top page eyebrows and the sidebar Projects folder, restricted `Quick note` to Home, locked Notes to Google Keep-style Grid view, moved Board options beside `+ New card`, polished the Board sidebar, unified dot-less color-tinted Mini Calendar highlights, and optimized narrow vertical layouts down to `360px` width.
+
 ## 1.0.0
 
 - **Unified Design System & 8 Theme Presets:** Added semantic design tokens (`Daylight`, `Paper`, `Mist`, `Sage`, `Obsidian`, `Graphite`, `Nord`, and `Espresso`) with a visual preview gallery in Settings and a checkable **View → Appearance** submenu.

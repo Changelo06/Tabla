@@ -60,9 +60,9 @@ class TablaWindow(MainWindow):
         self.root.layout().setSpacing(0)
         self.sidebar_layout.setContentsMargins(10, 14, 10, 16)
         self.sidebar_layout.setSpacing(3)
-        self.content.setContentsMargins(40, 24, 40, 20)
+        self.content.setContentsMargins(36, 18, 36, 18)
         self.statusBar().hide()
-        self.setMinimumSize(500, 400)
+        self.setMinimumSize(360, 400)
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setMouseTracking(True)
         self.chrome = TitleBar(self)
@@ -529,16 +529,7 @@ class TablaWindow(MainWindow):
                     f'QPushButton#nav:hover, QPushButton#nav[active="true"] {{background:{tint};}}')
             self.sidebar_layout.addWidget(btn)
             self.nav_buttons[name] = btn
-        self.sidebar_layout.addSpacing(5 if short else 9)
-        divider = QFrame()
-        divider.setObjectName('projectsDivider')
-        divider.setProperty('tablaThemed', True)
-        divider.setFixedSize(28, 1)
-        divider.setStyleSheet(f'background:{t.border_subtle};')
-        self.sidebar_layout.addWidget(divider, 0, Qt.AlignmentFlag.AlignHCenter)
-        self.sidebar_layout.addSpacing(5 if short else 9)
-        self._projects_btn = self.rail_button('Projects', 'folder', self.show_projects, bool(self.project_id) and self.page != 'My Tasks')
-        self.sidebar_layout.addWidget(self._projects_btn)
+        self._projects_btn = None
         self.sidebar_layout.addStretch()
         self.mini_timer = self.rail_button('Running focus timer', 'clock', lambda: self.navigate('Focus'))
         self.sidebar_layout.addWidget(self.mini_timer)
@@ -617,50 +608,92 @@ class TablaWindow(MainWindow):
         clear(self.content)
         self.capture = None
         short = self.height() < 650
-        self.content.setSpacing(8 if short else 18)
+        narrow = self.width() < 580
+        medium = 580 <= self.width() < 860
+        if narrow:
+            self.content.setContentsMargins(16, 12, 16, 14)
+        elif medium:
+            self.content.setContentsMargins(24, 16, 24, 16)
+        else:
+            self.content.setContentsMargins(36, 18, 36, 18)
+        self.content.setSpacing(8 if (short or narrow) else 14 if medium else 16)
         project = self.store.get(self.project_id) if self.project_id else None
-        crumb = project['title'] if project else 'Personal workspace'
-        page_label = 'Board' if self.page == 'My Tasks' else 'Home' if self.page == 'Today' else self.page
-        quick_note = button('Quick note', self.new_note, 'text', 'note')
-        quick_note.setToolTip('Quick note')
-        if short:
-            quick_note.setText('')
-        quick_note.setStyleSheet('QPushButton {border:1px solid #dadce0;border-radius:10px;padding:7px 12px;background:transparent;} QPushButton:hover {background:#f1f3f4;} QPushButton:focus {border:1px solid #2383e2;}')
-        if not short:
-            self.content.addLayout(row(label(crumb + '  /  ' + page_label, 'muted'), None))
         names = {'Today': 'Home', 'My Tasks': self.store.get(self.board_id)['title'], 'Settings': 'Settings and backups', 'Search': 'Search'}
         title = names['My Tasks'] if self.page == 'My Tasks' else project['title'] if project else names.get(self.page, self.page)
         heading = label(title, 'title')
         heading.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         heading.setMinimumWidth(0)
-        if short:
-            heading.setStyleSheet('font-size:23px;font-weight:600;')
-        if self.page == 'My Tasks':
-            board_opts = button('•••', lambda: self.board_menu(self.board_id), 'text')
+        if short or narrow:
+            heading.setStyleSheet('font-size:23px;font-weight:700;')
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(2)
+        title_stack.addWidget(heading)
+        if self.page == 'Today':
+            title_stack.addWidget(label(date.today().strftime('%A, %B %d'), 'subtitle'))
+
+        action_widgets = []
+        if self.page == 'Today':
+            from .tokens import current_tokens
+            t_hdr = current_tokens()
+            quick_note = button('Quick note', self.new_note, 'text', 'note')
+            quick_note.setToolTip('Quick note')
+            quick_note.setProperty('tablaThemed', True)
+            pad = '5px 10px' if narrow else '6px 12px'
+            quick_note.setStyleSheet(
+                f'QPushButton {{border:1px solid {t_hdr.border_strong};border-radius:10px;padding:{pad};'
+                f'background:{t_hdr.bg_elevated};color:{t_hdr.ink_primary};}}'
+                f'QPushButton:hover {{background:{t_hdr.bg_surface_hover};}}'
+                f'QPushButton:focus {{border:1px solid {t_hdr.accent};}}'
+            )
+            action_widgets.append(quick_note)
+            new_task_btn = button('New task', self.new_task, 'primary', 'plus')
+            action_widgets.append(new_task_btn)
+        elif self.page == 'My Tasks':
+            from .tokens import current_tokens
+            t_hdr = current_tokens()
+            action_widgets.append(button('New card', self.new_task, 'primary', 'plus'))
+            board_opts = button('', lambda: self.board_menu(self.board_id), 'text', 'more-h')
             board_opts.setAccessibleName('Board options')
             board_opts.setToolTip('Board options (rename, move, archive)')
-            board_opts.setFixedHeight(30)
-            head = row(heading, board_opts, None, spacing=6)
-        else:
-            head = row(heading, None)
-        head.setStretch(0, 1)
-        actions = head if self.width() >= 900 or short else row(None)
-        actions.addWidget(quick_note)
+            board_opts.setFixedSize(32, 32)
+            board_opts.setProperty('tablaThemed', True)
+            board_opts.setStyleSheet(
+                f'QPushButton {{background:{t_hdr.bg_elevated};color:{t_hdr.ink_secondary};'
+                f'border:1px solid {t_hdr.border_subtle};border-radius:9px;padding:0;}}'
+                f'QPushButton:hover {{background:{t_hdr.bg_surface_hover};color:{t_hdr.ink_primary};border-color:{t_hdr.border_strong};}}'
+            )
+            action_widgets.append(board_opts)
+
         if project and self.page != 'My Tasks':
-            edit = button('' if short else 'Edit project', lambda: self.edit_item(project), 'text', 'settings' if short else None)
+            edit = button('' if (short or narrow) else 'Edit project', lambda: self.edit_item(project), 'text', 'settings' if (short or narrow) else None)
             edit.setToolTip('Edit project')
             edit.setAccessibleName('Edit project')
-            actions.addWidget(edit)
-        if self.page in ('Today', 'My Tasks'):
-            actions.addWidget(button('New card' if self.page == 'My Tasks' else 'New task', self.new_task, 'primary', 'plus'))
-        elif self.page == 'Notes':
-            view = button('List' if self.note_view == 'Grid' else 'Grid', self.toggle_note_view, 'text', 'board')
-            actions.addWidget(view)
-        self.content.addLayout(head)
-        if actions is not head:
-            self.content.addLayout(actions)
-        if self.page == 'Today':
-            self.content.addWidget(label(date.today().strftime('%A, %B %d'), 'subtitle'))
+            action_widgets.insert(0, edit)
+
+        if action_widgets and (not narrow or short):
+            head = QHBoxLayout()
+            head.setContentsMargins(0, 0, 0, 0)
+            head.setSpacing(8)
+            head.addLayout(title_stack, 1)
+            for w_act in action_widgets:
+                head.addWidget(w_act, 0, Qt.AlignmentFlag.AlignVCenter)
+            self.content.addLayout(head)
+        else:
+            header_wrap = QVBoxLayout()
+            header_wrap.setContentsMargins(0, 0, 0, 0)
+            header_wrap.setSpacing(8)
+            header_wrap.addLayout(title_stack)
+            if action_widgets:
+                act_row = QHBoxLayout()
+                act_row.setContentsMargins(0, 0, 0, 0)
+                act_row.setSpacing(8)
+                for w_act in action_widgets:
+                    act_row.addWidget(w_act)
+                act_row.addStretch()
+                header_wrap.addLayout(act_row)
+            self.content.addLayout(header_wrap)
         if project and self.page != 'My Tasks':
             tabs = row()
             for title, route in (('Calendar', 'Calendar'), ('Board', 'My Tasks'), ('Notes', 'Notes')):
@@ -1082,7 +1115,7 @@ class TablaWindow(MainWindow):
         tools.addWidget(self.boards_toggle)
         self.sync_boards_sidebar()
         tools.addWidget(SegmentedSwitch(
-            [('Board', 'Cards', 'board'), ('Table', 'Table', 'tasks')],
+            [('Board', 'Cards', 'board'), ('Table', 'Table', 'table')],
             self.task_view,
             self.set_task_layout,
         ))
@@ -1102,13 +1135,19 @@ class TablaWindow(MainWindow):
         if self.task_view == 'Board':
             state.deleteLater()
             sort.deleteLater()
-            query.setFixedWidth(180 if self.width() < 900 else 220)
+            if self.width() < 560:
+                query.setMinimumWidth(70)
+                query.setMaximumWidth(180)
+            else:
+                query.setFixedWidth(180 if self.width() < 900 else 220)
             filter_button = button('Filter · ' + self.task_filter, self.board_filter, 'text')
             self.board_filter_button = filter_button
-            filter_button.setFixedWidth(105)
+            if self.width() >= 560:
+                filter_button.setFixedWidth(105)
             archive_button = button('Archived', self.board_archive, 'text')
-            archive_button.setFixedWidth(75)
-            filters = row(query, filter_button, archive_button)
+            if self.width() >= 560:
+                archive_button.setFixedWidth(75)
+            filters = row(query, filter_button, archive_button, spacing=6)
             if self.width() >= 900:
                 tools.addLayout(filters)
                 self.content.addLayout(tools)
@@ -1348,12 +1387,7 @@ class TablaWindow(MainWindow):
             for note, card in zip(matching, cards):
                 self._gallery_records[note['id']] = note
                 self._gallery_cards[note['id']] = card
-            if self.note_view == 'Grid':
-                v.addWidget(Masonry(cards))
-            else:
-                for card in cards:
-                    card.setMaximumWidth(760)
-                    v.addWidget(card, 0, Qt.AlignmentFlag.AlignHCenter)
+            v.addWidget(Masonry(cards))
         if not notes:
             empty = label('Your notes will appear here' if state == 'active' else ('Your archive is empty' if state == 'archive' else 'Trash is empty'), 'muted')
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1405,7 +1439,7 @@ class TablaWindow(MainWindow):
         self.notes_scroll.verticalScrollBar().setValue(scroll_position)
 
     def toggle_note_view(self):
-        self.note_view = 'List' if self.note_view == 'Grid' else 'Grid'
+        self.note_view = 'Grid'
         self.render()
 
     def note_card(self, note, compact=False):

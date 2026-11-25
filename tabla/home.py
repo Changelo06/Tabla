@@ -86,9 +86,9 @@ class CalendarDayButton(QPushButton):
             CalendarDayButton._FONT_REG = ui_font(12, QFont.Weight.Normal)
             CalendarDayButton._FONT_BOLD = ui_font(12, QFont.Weight.DemiBold)
         self.day, self.in_month, self.colors = day, in_month, colors
-        self.setMinimumSize(30, 34)
+        self.setMinimumSize(24, 30)
         self.setProperty('tablaThemed', True)
-        self.setStyleSheet('QPushButton {min-width:0;min-height:34px;padding:0;border:none;background:transparent;}')
+        self.setStyleSheet('QPushButton {min-width:0;min-height:30px;padding:0;border:none;background:transparent;}')
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clicked.connect(callback)
 
@@ -97,20 +97,22 @@ class CalendarDayButton(QPushButton):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         cx = self.width() / 2.0
-        cy = self.height() / 2.0 - 2.0
+        cy = self.height() / 2.0
         today = self.day == date.today()
-        pill = QRectF(cx - 14.0, cy - 12.0, 28.0, 24.0)
+        pill_w = min(28.0, max(22.0, self.width() - 4.0))
+        pill_h = min(25.0, max(22.0, self.height() - 4.0))
+        pill = QRectF(cx - pill_w / 2.0, cy - pill_h / 2.0, pill_w, pill_h)
 
+        accent_color = QColor(COLORS[self.colors[0]][1]) if self.colors else None
         if today:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(t.bg_pill))
             p.drawRoundedRect(pill, 8.0, 8.0)
-        elif self.colors:
-            accent = QColor(COLORS[self.colors[0]][1])
-            wash = QColor(accent)
-            wash.setAlpha(38 if t.dark else 26)
-            edge = QColor(accent)
-            edge.setAlpha(110 if (self.underMouse() or self.hasFocus()) else 68)
+        elif accent_color is not None:
+            wash = QColor(accent_color)
+            wash.setAlpha(48 if t.dark else 32)
+            edge = QColor(accent_color)
+            edge.setAlpha(125 if (self.underMouse() or self.hasFocus()) else 72)
             p.setBrush(wash)
             p.setPen(QPen(edge, 1.0))
             p.drawRoundedRect(pill, 8.0, 8.0)
@@ -121,6 +123,10 @@ class CalendarDayButton(QPushButton):
 
         if today:
             text_color = QColor(t.ink_inverse)
+        elif accent_color is not None:
+            text_color = accent_color.lighter(145) if t.dark else accent_color.darker(135)
+            if not self.in_month:
+                text_color.setAlpha(175)
         elif self.in_month:
             text_color = QColor(t.ink_primary)
         else:
@@ -129,15 +135,6 @@ class CalendarDayButton(QPushButton):
         p.setPen(text_color)
         p.setFont(CalendarDayButton._FONT_BOLD if (today or self.colors) else CalendarDayButton._FONT_REG)
         p.drawText(pill, Qt.AlignmentFlag.AlignCenter, str(self.day.day))
-
-        if self.colors:
-            shown = self.colors[:3]
-            dot_y = self.height() - 4.0
-            for index, name in enumerate(shown):
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(COLORS[name][1]))
-                x = cx + (index - (len(shown) - 1) / 2.0) * 5.2
-                p.drawEllipse(QRectF(x - 1.6, dot_y - 1.6, 3.2, 3.2))
         p.end()
 
 
@@ -166,12 +163,12 @@ class MiniCalendar(QFrame):
         self.day_buttons = {}
         self.setObjectName('homeCalendar')
         self.setAccessibleName('Mini calendar')
-        self.setMinimumWidth(270)
+        self.setMinimumWidth(210)
         self.setMaximumWidth(340)
         t = current_tokens()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(8)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
         self.heading = button('', self.open_month, 'text')
         self.heading.setAccessibleName('Open month in Calendar')
         self.heading.setProperty('tablaThemed', True)
@@ -281,7 +278,7 @@ class HomeDashboard(QWidget):
             board = owner.store.get(task.get('board'))
             if board:
                 caption += ' / ' + board['title']
-            link = HomeLink(task['title'], caption, lambda checked=False, rid=task['id']: owner.open_record(rid), 'clock', overdue)
+            link = HomeLink(task['title'], caption, lambda checked=False, rid=task['id']: owner.open_record(rid), 'tasks', overdue)
             self.deadline_links.append(link)
             due_layout.addWidget(link)
         if not self.visible_tasks:
@@ -332,6 +329,10 @@ class HomeDashboard(QWidget):
 
     def reflow(self, width):
         mode = 3 if width >= 1120 else 2 if width >= 760 else 1
+        compact_gap = 14 if width < 540 else 22
+        if self.grid.horizontalSpacing() != compact_gap:
+            self.grid.setHorizontalSpacing(compact_gap)
+            self.grid.setVerticalSpacing(compact_gap)
         if mode == self.mode:
             return
         self.mode, self.wide = mode, mode > 1
